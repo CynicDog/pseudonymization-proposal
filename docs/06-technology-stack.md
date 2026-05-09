@@ -14,7 +14,7 @@
 | Korean NLP | `kiwipiepy` or `konlpy` | Latest | Korean tokenizer/NER for Presidio custom recognizer |
 | Key management | HashiCorp Vault (on-prem) or Azure Key Vault via private link | `hvac` / `azure-keyvault-secrets` 4.x | On-prem key retrieval; no key material leaves on-prem boundary |
 | Azure auth (if AKV) | `azure-identity` | 1.x | Service principal or Managed Identity for AKV access over private link |
-| ADLS I/O | `adlfs` | Latest | `fsspec`-compatible Azure Data Lake Storage driver |
+| Storage I/O | PyArrow / Polars native (local) or `adlfs` (ADLS) | — | Local filesystem path or `fsspec`-compatible ADLS driver — TBD |
 | Data catalog | Microsoft Purview | Azure-managed | Sensitivity labels, lineage |
 | Orchestration | Azure Data Factory | Azure-managed | Pipeline scheduling, SHIR, activity chaining |
 | Audit logging | Azure Monitor SDK | `azure-monitor-opentelemetry` | Pipeline + key access event logging |
@@ -42,11 +42,21 @@ The current stack uses PySpark on Synapse/Databricks. For the actual data volume
 
 The following describes the architecture of the pseudonymization module (not implementation — see the implementation repository).
 
+### Storage Layer
+
+The output format is **Parquet** (confirmed). Whether the source and destination are a local or network filesystem (on-prem NAS, local disk) or Azure Data Lake Storage is not yet decided. This choice does not affect the pseudonymization logic or the Parquet output format — only the I/O path configuration changes.
+
+Polars and PyArrow support both transparently:
+- Local/NAS path: `pl.scan_parquet("/mnt/data/source.parquet")` — no additional dependency
+- ADLS: `pl.scan_parquet("abfs://container/path.parquet", storage_options={...})` — requires `adlfs`
+
+`adlfs` should be included in the dependency list only if ADLS is chosen as the storage layer.
+
 ### Lazy Evaluation for Memory Efficiency
 
 Polars supports lazy query execution (`LazyFrame`) where the computation plan is optimized before any data is loaded. For pseudonymization:
 
-- Read raw Parquet lazily from ADLS (`pl.scan_parquet`)
+- Read raw Parquet lazily (`pl.scan_parquet`)
 - Apply column expressions as a declarative plan
 - Execute with `.collect()` — Polars optimizes the execution plan, pushing column selection down before any transform
 
@@ -159,8 +169,8 @@ presidio-analyzer>=2.2.0
 presidio-anonymizer>=2.2.0
 spacy>=3.7.0
 kiwipiepy>=0.17.0
-adlfs>=2024.4.0
-hvac>=2.3.0                        # HashiCorp Vault client (on-prem KMS)
+adlfs>=2024.4.0                    # only if using ADLS as storage layer
+hvac>=2.3.0                        # only if using HashiCorp Vault as on-prem KMS
 azure-identity>=1.17.0             # only if using Azure Key Vault over private link
 azure-keyvault-secrets>=4.8.0      # only if using Azure Key Vault over private link
 azure-monitor-opentelemetry>=1.3.0

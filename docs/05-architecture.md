@@ -39,19 +39,21 @@ On-Prem Network
 │  ├── Applies FF1 / HMAC per classification manifest          │
 │  ├── Fetches keys from on-prem KMS (HashiCorp Vault or AKV   │
 │  │   via private link)                                       │
-│  └── Writes pseudonymized output to staging area             │
+│  └── Writes pseudonymized Parquet to staging storage         │
 │      │                                                       │
 │      ▼                                                       │
-│  Pseudonymized Staging Area (on-prem)                        │
+│  Pseudonymized Staging Storage                               │
+│  (local filesystem / NAS / ADLS — TBD)                      │
 │      │                                                       │
 └──────┼───────────────────────────────────────────────────────┘
-       │  ADF SHIR (TLS 1.2+)
+       │  ADF SHIR (TLS 1.2+) — if cloud storage is the target
+       │  or: Databricks reads directly from on-prem storage
        │  Ingests pseudonymized data — no raw PII ever enters cloud
        ▼
 Azure Cloud
 ┌──────────────────────────────────────────────────────────────┐
 │                                                              │
-│  ADLS — Ingested Zone (pseudonymized)                        │
+│  Cloud Storage — Ingested Zone (pseudonymized Parquet)       │
 │      │                                                       │
 │      ▼                                                       │
 │  Databricks (medallion: bronze → silver → gold)              │
@@ -72,7 +74,7 @@ Azure Cloud
 
 ### Option B — Post-Medallion Egress (Pseudonymize After Cloud Enrichment)
 
-Raw data is ingested into the cloud, processed through the Databricks medallion (bronze → silver → gold), and the enriched output is egressed back to on-prem for pseudonymization before being re-ingested as the final, pseudonymized dataset.
+Raw data is ingested into the cloud, processed through the Databricks medallion (bronze → silver → gold), and the enriched output is egressed back to on-prem for pseudonymization. The pseudonymized Parquet is then written to the final storage destination (on-prem or cloud).
 
 ```
 On-Prem Network
@@ -86,7 +88,7 @@ On-Prem Network
 Azure Cloud
 ┌──────────────────────────────────────────────────────────────┐
 │                                                              │
-│  ADLS — Raw Zone                                             │
+│  Cloud Storage — Raw Zone (Parquet)                          │
 │  (raw PII present; strict access controls required)          │
 │      │                                                       │
 │      ▼                                                       │
@@ -95,8 +97,8 @@ Azure Cloud
 │  Silver: cleanse, join, conform                              │
 │  Gold: curated domain entities (customer 360, unified claim) │
 │      │                                                       │
-│      │  Egress: ADF SHIR or ADLS → on-prem transfer         │
-│      │  (gold-layer output exported to on-prem)              │
+│      │  Egress: gold-layer Parquet exported to on-prem       │
+│      │  (ADF SHIR transfer or direct storage mount)          │
 └──────┼───────────────────────────────────────────────────────┘
        │
        ▼
@@ -104,19 +106,20 @@ On-Prem Network
 ┌──────────────────────────────────────────────────────────────┐
 │                                                              │
 │  On-Prem Pseudonymization Service                            │
-│  ├── Receives gold-layer export (enriched, joined entities)  │
+│  ├── Reads gold-layer Parquet (enriched, joined entities)    │
 │  ├── Applies FF1 / HMAC per classification manifest          │
-│  └── Writes pseudonymized output to staging area             │
-│      │                                                       │
-└──────┼───────────────────────────────────────────────────────┘
-       │  ADF SHIR — re-ingestion of pseudonymized data
-       ▼
-Azure Cloud
-┌──────────────────────────────────────────────────────────────┐
-│                                                              │
-│  ADLS — Pseudonymized Zone                                   │
+│  └── Writes pseudonymized Parquet to target storage          │
 │      │                                                       │
 │      ▼                                                       │
+│  Pseudonymized Storage                                       │
+│  (local filesystem / NAS / ADLS — TBD)                      │
+│      │                                                       │
+└──────┼───────────────────────────────────────────────────────┘
+       │  Re-ingested to cloud if needed for ML / inference
+       ▼
+Azure Cloud (if cloud consumption)
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
 │  ML Feature Store / Inference Endpoint / Analytics           │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
@@ -126,7 +129,7 @@ Azure Cloud
 - Pseudonymization is applied to enriched, cross-table-joined entities — the gold layer represents a cleaner, more complete view of each entity before pseudonymization
 - Cross-table referential integrity is naturally handled by the medallion joins; all entity references in the gold output are pseudonymized in a single pass
 - Raw PII exists in the cloud (Raw Zone and Bronze/Silver layers) — these layers require their own access controls, break-glass procedures, and PIPA-compliant safeguards
-- Additional data round-trip (cloud → on-prem → cloud) adds pipeline latency and egress cost
+- Additional data round-trip (cloud → on-prem → cloud if re-ingested) adds pipeline latency and egress cost
 - The PIPA compliance burden is higher: raw-data cloud storage must be documented and justified in the risk assessment
 
 ## Option Comparison
@@ -162,12 +165,12 @@ On-Prem Key Management
 Azure Governance (Cloud Side)
 ┌─────────────────────────────────────────────────────────┐
 │  Microsoft Purview                                      │
-│  • Sensitivity labels on all ADLS assets                │
+│  • Sensitivity labels on cloud storage assets           │
 │  • Data lineage tracking                                │
 │                                                         │
 │  Azure Monitor + Log Analytics                          │
 │  • Pipeline execution logs                              │
-│  • ADLS access logs (raw zone if Option B)              │
+│  • Cloud storage access logs (raw zone if Option B)     │
 │  • Pseudonymization audit events (forwarded from on-prem)│
 └─────────────────────────────────────────────────────────┘
 ```
@@ -177,7 +180,7 @@ Azure Governance (Cloud Side)
 Regardless of integration point, the pseudonymization service executes the same internal steps:
 
 ```
-Input data (source DB extract or gold-layer export)
+Input: raw Parquet file (from local filesystem, NAS, or cloud storage — path configured at runtime)
     │
     ▼
 Column scan (Presidio Analyzer + classification manifest lookup)
@@ -196,7 +199,8 @@ Technique dispatch per column
 Polars columnar transform (in-memory, streaming for large files)
     │
     ▼
-Pseudonymized output (Parquet) + Parquet schema metadata (technique, key version per column)
+Output: pseudonymized Parquet + schema metadata (technique, key version per column)
+        written to target path (local filesystem, NAS, or cloud storage — TBD)
     │
     ▼
 Audit log event emitted (job ID, timestamp, source, row count, columns, key versions, status)
@@ -204,6 +208,6 @@ Audit log event emitted (job ID, timestamp, source, row count, columns, key vers
 
 ## Scalability Notes
 
-The on-prem pseudonymization service is stateless and horizontally scalable — multiple instances can run concurrently on different source tables without coordination, since each instance only needs its own key fetch and classification manifest. For the current MB-scale data volumes, a single instance is sufficient. For GB-scale files, Polars streaming mode (`.sink_parquet()`) processes without materializing the full file in memory.
+The on-prem pseudonymization service is stateless and horizontally scalable — multiple instances can run concurrently on different source tables without coordination, since each instance only needs its own key fetch and classification manifest. For the current MB-scale data volumes, a single instance is sufficient. For GB-scale files, Polars streaming mode (`.sink_parquet()`) processes without materializing the full file in memory. The storage layer (local filesystem, NAS, or cloud storage) is orthogonal to this scalability characteristic — the service reads and writes Parquet regardless of where the files are located.
 
 If data volumes grow to TB-scale in the future, the pseudonymization logic (FF1/HMAC column transforms) is portable to a distributed engine (PySpark UDFs) without changing the technique, key management design, or classification manifest schema.
