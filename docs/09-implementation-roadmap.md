@@ -33,20 +33,27 @@ This document is designed to serve as a **sprint backlog** for the implementatio
 - [ ] Register custom recognizers in `RecognizerRegistry` and validate with sample Korean PII data
 
 ### 1.4 Base Polars Pseudonymization Module
-- [ ] Implement FF1 column transform using `ff3` library (FF1 mode only — not FF3-1)
-  - [ ] Accept: Polars Series, key bytes, tweak string, radix
-  - [ ] Return: Polars Series with pseudonymized values (string dtype)
+- [ ] Implement FF1 from NIST SP 800-38G using `cryptography` library's AES ECB primitive
+  - [ ] Feistel network: 10 rounds, configurable radix and tweak
+  - [ ] Encrypt and decrypt operations
+  - [ ] Validate implementation against all NIST SP 800-38G Appendix B test vectors before use
   - [ ] Handle: numeric-only strings, alphanumeric strings, format restoration (hyphens, separators) after encryption
-- [ ] Implement HMAC-SHA-256 column transform
+- [ ] Implement HMAC-SHA-256 column transform using Python stdlib (`hmac` + `hashlib`)
   - [ ] Accept: Polars Series, HMAC key bytes
   - [ ] Return: Polars Series (hex-encoded HMAC digest, 64 chars)
-- [ ] Implement Presidio free-text redaction transform
-  - [ ] Accept: Polars Series (string), list of entity types to redact
-  - [ ] Return: Polars Series with `[REDACTED_<ENTITY_TYPE>]` substitutions
+- [ ] Implement SDC transforms for numerical fields (NumPy + Polars built-ins)
+  - [ ] Top/bottom coding: `clip(lower, upper)` with configurable percentile thresholds per field
+  - [ ] Rounding: integer-division rounding to configured unit (e.g., 10M KRW for income)
+  - [ ] Micro-aggregation: sort → contiguous groups of k → replace with group mean (configurable k ≥ 5)
+  - [ ] Noise addition (Laplace): for fields where DP noise is appropriate; parameterized by global sensitivity and ε
+- [ ] Implement Presidio `StructuredEngine` column detection (regex + PatternRecognizer; no NER model)
+  - [ ] Accept: Polars DataFrame
+  - [ ] Return: per-column entity type annotations
+  - [ ] No spaCy NER model required for 100% tabular structured data
 - [ ] Implement technique dispatcher: reads classification manifest, routes each column to correct transform
-- [ ] Implement Key Vault client wrapper: `get_key(key_name, version=None)` using `DefaultAzureCredential`
+- [ ] Implement key store client wrapper: `get_key(key_name, version=None)` supporting both HashiCorp Vault and Azure Key Vault
 - [ ] Write Parquet output with pseudonymization metadata in schema custom metadata
-- [ ] Unit tests: round-trip FF1 (encrypt → decrypt), HMAC determinism, Presidio redaction
+- [ ] Unit tests: round-trip FF1 against NIST vectors, HMAC determinism, SDC transforms preserve expected statistical properties
 - [ ] Integration test with sample dataset from staging source
 
 ### 1.5 ADLS Zone Setup
@@ -132,11 +139,14 @@ This document is designed to serve as a **sprint backlog** for the implementatio
 - [ ] Review network security: confirm all services accessed via private endpoints; no public exposure
 - [ ] Simulate unauthorized access attempt: verify access is denied and alert fires in Log Analytics
 
-### 3.4 Re-identification Penetration Test
-- [ ] Engage internal security team or external third party to attempt re-identification of a pseudonymized dataset without access to Key Vault
-- [ ] Provide: pseudonymized Parquet file + schema + publicly available information sources
-- [ ] Expected result: re-identification computationally infeasible; no successful linkage to real individuals
-- [ ] Document findings and remediate any identified weaknesses
+### 3.4 Re-identification Risk Quantification
+- [ ] Run `anonymeter` (CNIL-recognized privacy risk framework) against the pseudonymized dataset:
+  - [ ] Singling-out attack: can an attacker uniquely identify an individual record?
+  - [ ] Linkability attack: can records of the same individual be linked across two pseudonymized datasets?
+  - [ ] Inference attack: can sensitive attribute values (e.g., claim amount, income tier) be inferred from non-sensitive fields?
+- [ ] Document `anonymeter` output as part of PIPA risk assessment (re-identification probability per attack type)
+- [ ] Optionally: engage internal security team or external third party for manual re-identification attempt using the pseudonymized dataset + public sources
+- [ ] Remediate any identified weaknesses (typically: increase k for micro-aggregation, tighten top-code threshold, or add noise to residual high-entropy fields)
 
 ### 3.5 ML Inference Pipeline Validation
 - [ ] Deploy a test inference endpoint consuming pseudonymized features

@@ -20,17 +20,17 @@ The team previously used PySpark modules on Synapse/Databricks for data transfor
 
 ## Recommended Approach
 
-**Technique:** Format-Preserving Encryption (FF1, NIST SP 800-38G) as the primary pseudonymization method, with HMAC-SHA-256 for cross-dataset referential keys.
+The core pseudonymization challenge in an insurance data platform is **statistical**, not cryptographic. The fields that matter for ML — income, claim amounts, premiums, benefit levels — must remain numerically meaningful after pseudonymization. Encrypting them produces data that is both private and useless to a model. The approach is therefore primarily Statistical Disclosure Control (SDC), applied to sensitive numerical attributes, with identifier surrogation as a supporting step.
 
-- FF1 is stateless, deterministic, reversible (with key), and format-preserving — a 13-digit government ID remains 13 digits after pseudonymization, preserving compatibility with downstream schema contracts.
-- HMAC-SHA-256 provides one-way, deterministic pseudonymization for keys that must join across tables but must not be reversible.
-- Both techniques produce consistent output for the same input and key, preserving referential integrity for ML feature engineering.
+**For sensitive numerical attributes** (income, claim amounts, policy values, medical-adjacent fields):
+Statistical Disclosure Control — rounding to appropriate precision, top-coding at the 99th percentile to suppress identifying extreme values, and micro-aggregation where a k-anonymity guarantee is needed. These techniques preserve the distributional shape used in ML modeling while suppressing the rare extreme values that enable individual re-identification. This is the established methodology for insurance and actuarial microdata, grounded in Hundepool et al. (2012) and Domingo-Ferrer (2016).
 
-**Engine:** Polars 1.x + PyArrow — columnar, in-memory, Rust-based. Handles MB–GB workloads on a single node with millisecond-level latency. Replaces PySpark for the pseudonymization step; Databricks remains as the ML training and serving platform.
+**For direct identifiers** (customer ID, resident registration number, policy number, phone number):
+Consistent surrogation — a deterministic transformation that replaces each identifier with a stable, opaque surrogate, enabling cross-table joins without revealing the original identity. These fields are not ML features; the surrogation technique's primary requirement is consistency, not cryptographic strength.
 
-**Key Management:** Azure Key Vault with per-environment, per-classification-tier key namespacing. Managed Identity access for ADF and Databricks; no human access to production keys.
+**Engine:** Polars 1.x + PyArrow — columnar, in-memory, deployed on-prem. Handles MB–GB workloads on a single node. Replaces PySpark for the pseudonymization step; Databricks remains as the ML training platform.
 
-**Detection:** Microsoft Presidio as the PII column detection layer, extended with Korean-specific pattern recognizers.
+**Detection:** Microsoft Presidio `StructuredEngine` with regex-based pattern recognizers for structured tabular fields. No NER or language model inference required for 100% tabular data.
 
 ## Architecture Summary
 
@@ -68,11 +68,12 @@ Full roadmap: [09-implementation-roadmap.md](09-implementation-roadmap.md)
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Primary technique | FF1 (FPE) | Format-preserving; stateless; NIST-standardized; deterministic |
-| Referential key technique | HMAC-SHA-256 | One-way; deterministic; no vault required |
-| Transform engine | Polars 1.x | Right-sized for MB-GB; no Spark overhead; on-prem deployable without cloud runtime |
-| Deployment target | On-premises | Pseudonymization logic and key access stay within on-prem security boundary |
-| Pipeline placement | TBD (Option A or B) | Pre-ingestion or post-medallion; design is open to either — see [05-architecture.md](05-architecture.md) |
-| Key store | HashiCorp Vault (on-prem) or Azure Key Vault via private link | Keys remain accessible to on-prem service; no key material in cloud compute |
-| PII detection | Microsoft Presidio | Open-source; Python-native; extensible for Korean patterns |
-| Do NOT use | FF3/FF3-1 | NIST-withdrawn Feb 2025 (Beyne 2021 cryptographic weakness) |
+| Primary approach for numerical fields | SDC (round → top-code → micro-aggregate) | Preserves distributional utility for ML; suppresses identifying extremes |
+| Approach for direct identifiers | Deterministic surrogation (HMAC or FF1) | Consistent join-key replacement; these fields are not ML features |
+| Transform engine | Polars 1.x + PyArrow | Right-sized for MB-GB; on-prem deployable; no Spark overhead |
+| Deployment target | On-premises | Pseudonymization logic stays within on-prem security boundary |
+| Pipeline placement | TBD (pre-ingestion or post-medallion) | Open to either — see [05-architecture.md](05-architecture.md) |
+| Column detection | Microsoft Presidio StructuredEngine (regex-based) | No NER model needed for 100% tabular data |
+| Key store (for identifier surrogation) | HashiCorp Vault (on-prem) or Azure Key Vault via private link | Keys stay within on-prem boundary |
+| Do NOT use | FF3/FF3-1 | NIST-withdrawn Feb 2025; cryptographic weakness in tweak schedule |
+| Do NOT apply to analytical fields | Encryption (FF1, HMAC, AES) | Encrypted numerical fields are meaningless for ML |

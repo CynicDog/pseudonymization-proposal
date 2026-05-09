@@ -1,161 +1,75 @@
-# 04 — Industry Solutions Survey
+# 04 — Approaches and Research Grounding
 
-## Overview
+## How the Industry Frames This Problem
 
-This document surveys the current landscape of pseudonymization and data privacy tooling — open-source libraries, cloud-managed services, and commercial enterprise platforms. Each is evaluated in the context of this company's infrastructure (Azure-centric, ADF + Databricks, MB-GB data scale, Korean PII patterns).
+Pseudonymization of insurance and financial data is treated in the literature and in regulatory guidance primarily as a **statistical disclosure control** (SDC) problem, not a cryptographic one. The distinction matters: cryptography protects data in transit and at rest from unauthorized access; SDC protects the analytical content of data from enabling re-identification when the data is shared, processed, or used for modeling.
 
+The authoritative body of work on SDC for microdata — individual-level records of the kind that appear in insurance portfolios — is organized around three questions:
 
-## Open-Source Tools (Recommended Stack)
+**1. What makes a record identifying?** A record is identifying when a combination of its attribute values is rare enough that it can be linked to a specific individual using external information (public registries, social media, other datasets). High income, unusual claim patterns, rare diagnosis combinations, and extreme ages are common quasi-identifiers in insurance data.
 
-### Microsoft Presidio
+**2. What transformations reduce identifiability while preserving analytical utility?** The answer depends on the field type. For continuous numerical attributes (income, claim severity), the SDC toolkit — rounding, top-coding, micro-aggregation, generalization — is designed to suppress the rare extremes that enable singling out while leaving the bulk of the distribution intact for modeling.
 
-**Repository:** github.com/microsoft/presidio  
-**License:** MIT
+**3. How is the residual risk measured?** Re-identification risk is quantified through measures like k-anonymity (how many records share a given quasi-identifier combination), information loss metrics, and adversarial attack simulations (singling-out, linkability, inference).
 
-Presidio is Microsoft's open-source framework for PII detection and anonymization in text, structured data, and images. It operates in two stages:
+## Research Foundation
 
-1. **Presidio Analyzer:** Detects PII entities using a combination of named entity recognition (NER via spaCy), regex patterns, rule-based context enhancement, and a confidence scoring model.
-2. **Presidio Anonymizer:** Applies configurable operators to detected entities — redact, replace, mask, hash, encrypt, or custom operator.
+The technique choices in this proposal are grounded in the following authoritative sources. These should be accessible to the implementation team as reference material.
 
-**Why Presidio for this stack:**
-- Python-native; integrates naturally with Polars/Pandas pipelines via the `anonymize` operator
-- Documented integration with Azure Data Factory and Databricks (microsoft.github.io/presidio/samples/deployments/data-factory/)
-- Fully customizable: add custom recognizers for Korean PII patterns (주민등록번호 regex, Korean phone format, 사업자등록번호)
-- Active maintenance by Microsoft; Azure alignment reduces integration friction
-- The analyzer can scan structured DataFrames column-by-column and return entity-type annotations, enabling automated column classification without manual inventory
+**Hundepool, A., Domingo-Ferrer, J., Franconi, L., Giessing, S., Schulte Nordholt, E., Spicer, K., & de Wolf, P.P. (2012). *Statistical Disclosure Control*. Wiley.**
 
-**Role in this proposal:** Detection and classification layer. Presidio identifies which columns contain PII and of what type; the pseudonymization engine (Polars + FF1/HMAC) then applies the appropriate technique.
+The reference textbook for SDC methodology. Covers the full range of techniques for microdata (rounding, top-coding, micro-aggregation, generalization, data swapping, synthetic data, noise addition) with a rigorous treatment of information loss measurement and disclosure risk. This is the primary methodological reference for the numerical field treatment in this platform.
 
-**Installation:**
-```
-pip install presidio-analyzer presidio-anonymizer
-python -m spacy download en_core_web_lg
-```
+**Domingo-Ferrer, J. (2016). *Database Anonymization: Privacy Models, Data Utility, and Microaggregation-based Inter-model Connections*. Morgan & Claypool Synthesis Lectures.**
 
-For Korean text, a Korean spaCy model or a `kiwipiepy`-based custom NER component should be added.
+Connects k-anonymity, t-closeness, and differential privacy through the micro-aggregation framework, and shows that applying formal privacy models to micro-aggregated data achieves better utility than applying them to raw data. Directly relevant to the ML pipeline design where both analytical utility and formal privacy guarantees are desired.
 
+**Oganian, A. & Domingo-Ferrer, J. (2001). On the Complexity of Optimal Microaggregation for Statistical Disclosure Control. *Statistical Journal of the UN Economic Commission for Europe*, 18(4), 345–353.**
 
-### ff3 (PyPI)
+Establishes that optimal micro-aggregation is NP-hard, motivating the greedy contiguous-sort approximation that is the practical standard. Understanding this result clarifies why all production implementations use approximations and what information loss to expect.
 
-**Package:** `ff3`  
-**License:** Apache 2.0
+**El Emam, K., Jonker, E., Arbuckle, L., & Malin, B. (2011). A Systematic Review of Re-Identification Attacks on Health Data. *PLoS ONE*, 6(12), e28071.**
 
-Implements Format-Preserving Encryption (FPE) using the FF1 algorithm (NIST SP 800-38G). Lightweight, no heavy dependencies. Supports configurable radix (numeric, alphanumeric, arbitrary character set) and tweak (domain separator for key derivation per field type).
+A comprehensive review of known re-identification attacks on de-identified health data — the domain most analogous to insurance microdata. The attack methodologies described (quasi-identifier matching, probabilistic linkage) inform the risk assessment approach required by the PIPA preliminary plan.
 
-**Usage pattern:**
-```python
-from ff3 import FF3Cipher
-cipher = FF3Cipher(key, tweak, radix=10)
-pseudonym = cipher.encrypt(plaintext)
-original  = cipher.decrypt(pseudonym)
-```
+**Dwork, C. & Roth, A. (2014). *The Algorithmic Foundations of Differential Privacy*. Foundations and Trends in Theoretical Computer Science, 9(3–4).**
 
-**Limitations:**
-- Pure Python; for high-throughput columnar transforms (millions of rows), wrap in a Polars expression or batch-vectorize
-- Minimum domain constraint: radix^minlen ≥ 100 (satisfied by all standard PII field types)
-- Use FF1 mode only (the library supports both FF1 and FF3-1; FF3-1 is cryptographically broken — see [03-pseudonymization-techniques.md](03-pseudonymization-techniques.md))
+The formal reference for differential privacy, covering Laplace and Gaussian mechanisms, composition theorems, and privacy budget allocation. Referenced when noise perturbation is applied or when a formal DP bound is required for external data sharing.
 
+**NIST SP 800-38G (2016, Draft Rev. 1 February 2025). *Recommendation for Block Cipher Modes of Operation: Methods for Format-Preserving Encryption*.**
 
-### py4phi
+The standard specifying FF1, the format-preserving encryption algorithm used for direct identifier pseudonymization where the original field format must be preserved. The 2025 revision removes FF3/FF3-1 from the standard due to a cryptographic weakness; only FF1 is compliant.
 
-**Repository:** github.com/phi-friday/py4phi  
-**License:** MIT
+**NIST SP 800-188 (2023). *De-Identifying Government Datasets*. Garfinkel, S.L.**
 
-A DataFrame encryption library supporting Polars, Pandas, and PySpark as backends. Provides column-level AES encryption/decryption with built-in key and salt management. Includes a CLI interface for batch operations.
+Practical federal guidance on de-identification, covering the full data lifecycle, quasi-identifier identification, k-anonymity, and formal privacy models. More accessible than the primary research literature; useful as a reference for compliance documentation.
 
-**Role in this proposal:** AES-based encryption for fields where FPE format preservation is not required (e.g., AES-SIV equivalent for variable-length blobs). Also useful as a wrapper for key file management when prototyping the pseudonymization module.
+**PIPC (2020). *Comprehensive Guidelines on Processing Pseudonymized Data*. Personal Information Protection Commission, Korea.**
 
+The authoritative regulatory guidance for PIPA-compliant pseudonymization in Korea. Establishes the four-stage process (preliminary plan, risk assessment, execution, evaluation) and the organizational accountability framework. The pseudonymization approach in this proposal is designed to satisfy these requirements.
 
-### scrubadub
+## How the SDC Approach Applies Here
 
-**Package:** `scrubadub`  
-**License:** MIT
+The insurance portfolio data in this platform is a textbook SDC scenario. Policy records contain a mix of direct identifiers (which are handled by consistent surrogation and dropped from ML features) and sensitive numerical attributes (income, premiums, claim amounts, benefit levels) that are the actual modeling targets and features.
 
-Regex and rule-based PII scrubber for unstructured text. Detects and redacts names, email addresses, phone numbers, credit card numbers, and other patterns in free-text strings.
+For the numerical attributes, the established approach — round to reduce precision, top-code to suppress identifying extremes, micro-aggregate if a k-anonymity guarantee is needed — has been validated in actuarial and statistical contexts for decades. It is the approach used by national statistical offices when publishing insurance and financial microdata for research use.
 
-**Role:** Secondary detection layer for free-text fields (claim notes, customer service transcripts, policy remarks) where Presidio NER may be supplemented with lightweight regex fallback.
+The key property that makes this approach appropriate for ML is that all three techniques (rounding, top-coding, micro-aggregation) preserve the distributional shape of the data in the central mass of the distribution — precisely where most records and most model training signal live. Only the rare extreme values, which are simultaneously the most identifying and the least representative of the overall population, are meaningfully altered.
 
+## The PII Detection Layer
 
-### Faker / Mimesis
+Identifying which columns in the data require treatment — and which SDC or surrogation technique to apply — is the classification problem. For this platform's tabular data, the classification approach relies on:
 
-**Packages:** `faker`, `mimesis`
+- **Schema-level knowledge**: The data classification inventory produced in Phase 1 is the primary source. Data owners and the actuarial team know which columns contain income, which contain claim amounts, and which contain direct identifiers.
+- **Pattern-based detection**: For string-type columns that may contain structured identifiers (RRN, policy number, phone number), regex-based pattern matching against the column values confirms and validates the classification.
+- **Column-name heuristics**: Systematic naming conventions (`*_income`, `*_amount`, `*_id`, `*_rnn`) supplement the inventory for columns added after the initial classification.
 
-Synthetic data generation libraries producing realistic-looking but entirely fictitious PII (names, addresses, phone numbers, dates, IDs). Faker supports Korean locale (`ko_KR`) via its locale system.
+Microsoft Presidio's `StructuredEngine` is well-suited to the pattern-based detection step for structured fields. For a 100% tabular dataset with no free text, it operates purely on regex `PatternRecognizer` instances — no language model or NER inference is involved.
 
-**Role:** Development and test dataset generation only. These libraries are non-deterministic and irreversible — they are not suitable for production pseudonymization pipelines where referential integrity across runs is required.
+## What the Platform Does Not Need
 
+**Vaulted tokenization**: Stores original values in a secure vault and replaces production records with random tokens. The vault lookup overhead makes it incompatible with ML feature pipelines. For this platform, consistent surrogation via deterministic hash achieves the same join-key function without the vault infrastructure.
 
-### Apache Ranger / Apache Atlas
+**Heavy encryption for analytical fields**: Format-preserving encryption (FF1) and symmetric encryption are appropriate for direct identifiers that need an opaque, format-consistent surrogate. Applying them to income, claim amounts, or any field that a model must learn from produces a result that is both privacy-protecting and analytically useless. The correct tool for analytical fields is SDC.
 
-**Role:** Access control (Ranger) and data governance / lineage (Atlas) for Hadoop/Spark ecosystems.
-
-**Applicability:** If the team adopts Databricks Unity Catalog, Ranger/Atlas are superseded. If not, Ranger can enforce column-level masking policies in Databricks SQL; Atlas can track data lineage from raw to pseudonymized zone. These are optional infrastructure additions, not core pseudonymization components.
-
-
-## Cloud-Managed Services
-
-### Microsoft Purview (Azure Purview)
-
-Microsoft Purview (formerly Azure Purview) is a unified data governance service with native integration into Azure Data Factory, ADLS, and Databricks.
-
-**Relevant capabilities:**
-- **Sensitivity labeling:** Automatically scan ADLS and annotate datasets with sensitivity classifications
-- **Data lineage:** Track data flow from on-prem source through ADF pipelines to ADLS zones and Databricks
-- **Data catalog:** Central inventory of all data assets with classification metadata
-
-**Role in this proposal:** Metadata and governance layer. Purview labels datasets as containing PII/SPII classes; these labels inform the pseudonymization engine which technique to apply per column. Purview's lineage graph provides the audit trail evidence for PIPA compliance documentation.
-
-**Recommendation:** Adopt Purview as the classification metadata layer. It is available as part of Azure enterprise agreements and integrates directly with the existing Azure infrastructure.
-
-
-### Google Cloud Sensitive Data Protection (Cloud DLP)
-
-Google's managed PII detection and pseudonymization service. Supports FPE-FFX (compatible with FF1), reversible tokenization, redaction, masking, and bucketing. 120+ built-in detectors covering global and regional PII types.
-
-**Not recommended for this stack.** The company's infrastructure is Azure-centric (ADF, ADLS, Databricks on Azure). Introducing GCP DLP creates a cross-cloud dependency, adds latency for data that lives in Azure, complicates IAM management, and adds cost for data egress. The open-source stack (Presidio + ff3) achieves equivalent functionality without this coupling.
-
-
-### AWS Macie / AWS Glue DataBrew
-
-AWS-native PII discovery (Macie) and data preparation / masking (DataBrew). Not applicable to an Azure-based stack.
-
-
-## Enterprise Commercial Platforms (Reference Only)
-
-These platforms are included for completeness and competitive awareness. None are recommended for this use case given the available open-source alternatives and the MB-GB data scale.
-
-### Protegrity
-
-Enterprise data security platform offering tokenization, FPE (AES-256 based), and masking across structured and unstructured data in hybrid/multi-cloud environments. Strong enterprise support and compliance track record.
-
-**Assessment:** Mature and proven at scale, but significantly overengineered and over-priced for MB-GB data volumes. FPE capability is equivalent to the `ff3` open-source library for this use case.
-
-### Privitar Publisher
-
-Policy-based de-identification and anonymization framework. Strong privacy risk quantification and policy management features.
-
-**Assessment:** Better suited for large enterprises with dedicated privacy engineering teams managing complex multi-dataset anonymization policies. The open-source stack with documented policies is sufficient here.
-
-### IBM InfoSphere Optim Data Privacy
-
-Legacy enterprise platform for data masking and subsetting. Supports FPE (AES-256) with user-defined keys across on-premises and cloud data sources.
-
-**Assessment:** Complex deployment, declining ecosystem support, not a fit for a modern Azure + Polars stack.
-
-
-## Recommendation Summary
-
-| Tool | Role | Adopt |
-|---|---|---|
-| Microsoft Presidio | PII detection and classification | Yes |
-| ff3 (PyPI) | FF1 format-preserving encryption | Yes |
-| py4phi | AES column encryption, key management helper | Yes |
-| scrubadub | Free-text PII redaction fallback | Optional |
-| Faker / Mimesis | Dev/test synthetic data | Yes (non-prod only) |
-| Microsoft Purview | Data catalog, sensitivity labeling, lineage | Yes |
-| Apache Ranger / Atlas | Access control / lineage (if no Unity Catalog) | Optional |
-| Google Cloud DLP | FPE + tokenization (managed) | No |
-| Protegrity | Enterprise FPE platform | No |
-| Privitar / IBM Optim | Enterprise privacy platforms | No |
-
-The recommended stack is entirely open-source for the core pseudonymization engine, with Azure-native services (Key Vault, Purview, Monitor) for governance and operations. This minimizes vendor lock-in, maximizes auditability, and is right-sized for MB-GB workloads.
+**Differential privacy as a data layer**: Laplace/Gaussian noise applied field-by-field at the data storage layer is rarely the right answer for insurance microdata with high-range fields. The noise required to achieve a meaningful privacy budget at the field level destroys the signal. DP belongs at the model training boundary (DP-SGD), not at the data layer, except for fields with naturally bounded small ranges.

@@ -23,7 +23,7 @@ This repository is a **proposal document set** — not implementation code. It i
 | 01 | [Executive Summary](docs/01-executive-summary.md) | Problem statement, scope, recommended approach, roadmap at a glance |
 | 02 | [Regulatory Context](docs/02-regulatory-context.md) | Korean PIPA (개인정보보호법), PIPC guidelines, compliance posture |
 | 03 | [Pseudonymization Techniques](docs/03-pseudonymization-techniques.md) | Taxonomy of techniques, decision criteria, field-type mapping |
-| 04 | [Industry Solutions](docs/04-industry-solutions.md) | Survey of open-source and commercial tools; recommendations |
+| 04 | [Approaches and Research Grounding](docs/04-industry-solutions.md) | SDC methodology, research references, detection layer design |
 | 05 | [Architecture](docs/05-architecture.md) | Three-zone data platform architecture with ASCII diagrams |
 | 06 | [Technology Stack](docs/06-technology-stack.md) | Polars/PyArrow-based stack; why not PySpark; Korean NLP |
 | 07 | [ML Pipeline Integration](docs/07-ml-pipeline.md) | Pseudonymized feature design, inference boundary, DP options |

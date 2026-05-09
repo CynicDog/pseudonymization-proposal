@@ -2,23 +2,23 @@
 
 ## Primary Stack
 
-| Component | Tool / Library | Version | Role |
+| Component | Tool / Library | Stars | Role |
 |---|---|---|---|
-| Transform engine | Polars | 1.x | Columnar DataFrame processing for MB-GB datasets |
-| Columnar format | PyArrow | 17.x | Arrow IPC, Parquet I/O, zero-copy interop |
-| FPE encryption | `ff3` (PyPI) | Latest | FF1 format-preserving encryption (NIST SP 800-38G) |
-| Column-level encryption | `py4phi` | Latest | AES column encryption; key management helper |
-| Authenticated encryption | `cryptography` (PyPI) | 43.x | AES-SIV (RFC 5297) for unstructured fields |
-| Keyed hash | `hmac` + `hashlib` | stdlib | HMAC-SHA-256 for referential keys (no dependency) |
-| PII detection | Microsoft Presidio | 2.x | NER + regex PII detection; anonymization operators |
-| Korean NLP | `kiwipiepy` or `konlpy` | Latest | Korean tokenizer/NER for Presidio custom recognizer |
-| Key management | HashiCorp Vault (on-prem) or Azure Key Vault via private link | `hvac` / `azure-keyvault-secrets` 4.x | On-prem key retrieval; no key material leaves on-prem boundary |
-| Azure auth (if AKV) | `azure-identity` | 1.x | Service principal or Managed Identity for AKV access over private link |
-| Storage I/O | PyArrow / Polars native (local) or `adlfs` (ADLS) | — | Local filesystem path or `fsspec`-compatible ADLS driver — TBD |
+| Transform engine | Polars 1.x | 32k | Columnar DataFrame processing for MB-GB datasets |
+| Columnar format | PyArrow 17.x | 14k (Apache Arrow) | Arrow IPC, Parquet I/O, zero-copy interop |
+| Crypto foundation | `cryptography` (PyCA) 43.x | 7,600 | AES-SIV, AES-ECB primitives (FF1 building block), HMAC |
+| FF1 implementation | In-house, from NIST SP 800-38G | — | Built on `cryptography` AES-ECB; validated against NIST test vectors |
+| Keyed hash | `hmac` + `hashlib` | stdlib | HMAC-SHA-256 for referential keys; no external dependency |
+| Numerical SDC | NumPy 2.x + Polars built-ins | 26k | Top-coding (`clip`), rounding (`round`), micro-aggregation, noise |
+| PII detection | Microsoft Presidio 2.x (`StructuredEngine`) | 7,400 | Regex-based column classification for tabular data; no NER required |
+| Korean patterns | Custom `PatternRecognizer` instances | — | RRN, 사업자등록번호, Korean phone, address — registered in Presidio |
+| Privacy validation | `anonymeter` 1.x | ~100 (CNIL-recognized) | Post-pseudonymization singling-out / linkability / inference risk |
+| Key management | HashiCorp Vault (on-prem) or Azure Key Vault via private link | — | On-prem key retrieval; no key material leaves on-prem boundary |
+| Storage I/O | Polars/PyArrow native (local) or `adlfs` (ADLS) | — | Local filesystem or cloud storage — TBD |
 | Data catalog | Microsoft Purview | Azure-managed | Sensitivity labels, lineage |
 | Orchestration | Azure Data Factory | Azure-managed | Pipeline scheduling, SHIR, activity chaining |
-| Audit logging | Azure Monitor SDK | `azure-monitor-opentelemetry` | Pipeline + key access event logging |
-| ML runtime | Databricks Runtime | 14.x LTS | Feature engineering and ML training on pseudonymized data |
+| Audit logging | Azure Monitor + Log Analytics | Azure-managed | Pipeline execution + key access event logging |
+| ML runtime | Databricks Runtime 14.x LTS | — | Feature engineering and ML training on pseudonymized data |
 
 
 ## Why Polars Instead of PySpark
@@ -36,6 +36,8 @@ The current stack uses PySpark on Synapse/Databricks. For the actual data volume
 | Spark-specific patterns needed | Yes (RDDs, Catalyst optimizer) | No; standard Python data engineering |
 
 **Decision:** Use Polars for the pseudonymization step, deployed on-prem as a standalone Python service or containerized process. This eliminates the need for cloud compute (Databricks, Azure Functions) in the pseudonymization path, keeping the service lightweight and independently deployable within the on-prem security boundary. Databricks remains as the ML training and feature engineering platform. If data volume growth reaches consistent multi-GB or TB scale, the FF1/HMAC pseudonymization logic is portable to PySpark UDFs without changing the technique, key management design, or classification manifest schema.
+
+Note on dropped libraries: `ff3` (~4 GitHub stars) and `py4phi` (single-person project, unknown adoption) were removed from the stack. All cryptographic operations are built on `cryptography` (PyCA, 7,600 stars, weekly releases) with FF1 implemented in-house against the NIST spec. See [04-industry-solutions.md](04-industry-solutions.md) for rationale.
 
 
 ## Polars Pseudonymization Patterns
@@ -160,18 +162,32 @@ In both cases: keys are never written to disk, environment variables, logs, or p
 ## Dependency Summary (requirements.txt skeleton)
 
 ```
+# core transform
 polars>=1.0.0
 pyarrow>=17.0.0
-ff3>=1.0.0
-py4phi>=0.5.0
+numpy>=2.0.0
+
+# cryptography — FF1 (in-house, NIST SP 800-38G) + HMAC + AES-SIV
 cryptography>=43.0.0
+# hmac, hashlib: stdlib, no pin needed
+
+# PII detection (tabular — StructuredEngine + PatternRecognizer, no NER model required)
 presidio-analyzer>=2.2.0
 presidio-anonymizer>=2.2.0
-spacy>=3.7.0
-kiwipiepy>=0.17.0
-adlfs>=2024.4.0                    # only if using ADLS as storage layer
-hvac>=2.3.0                        # only if using HashiCorp Vault as on-prem KMS
-azure-identity>=1.17.0             # only if using Azure Key Vault over private link
-azure-keyvault-secrets>=4.8.0      # only if using Azure Key Vault over private link
+presidio-structured>=0.0.4
+kiwipiepy>=0.17.0                  # Korean tokenizer for free-text fallback if needed
+
+# privacy risk validation
+anonymeter>=1.0.0
+
+# storage (conditional)
+adlfs>=2024.4.0                    # only if ADLS is chosen as storage layer
+
+# key management (one of the following)
+hvac>=2.3.0                        # HashiCorp Vault on-prem
+azure-keyvault-secrets>=4.8.0      # Azure Key Vault over private link
+azure-identity>=1.17.0             # required if using Azure Key Vault
+
+# audit logging (if forwarding to Azure Monitor)
 azure-monitor-opentelemetry>=1.3.0
 ```
