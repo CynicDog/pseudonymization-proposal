@@ -34,23 +34,25 @@ The team previously used PySpark modules on Synapse/Databricks for data transfor
 
 ## Architecture Summary
 
+The pseudonymization service runs on-premises. Its exact placement in the pipeline — whether before data enters the cloud (pre-ingestion) or after the Databricks medallion enrichment (post-medallion egress) — is an open architectural decision pending governance policy alignment. Both options share the same module design and key management approach.
+
 ```
-On-Prem DB
-    │ (ADF SHIR, TLS 1.2+)
-    ▼
-Raw Zone (ADLS) — break-glass access only
-    │ (ADF-triggered Polars job)
-    ▼
-Pseudonymization Layer — FF1 + HMAC, keys from Azure Key Vault
-    │
-    ▼
-Pseudonymized Zone (ADLS, Parquet/Delta)
-    ├── Databricks — ML training, feature engineering
-    ├── ML Inference Endpoint
-    └── Analytics / BI
+Option A — Pre-Ingestion
+
+  On-Prem DB → [On-Prem Pseudo Service] → ADF SHIR → ADLS (pseudonymized) → Databricks → ML
+
+Option B — Post-Medallion Egress
+
+  On-Prem DB → ADF SHIR → ADLS (raw) → Databricks Medallion
+                                              │ egress gold layer
+                                              ▼
+                                    [On-Prem Pseudo Service]
+                                              │ re-ingest
+                                              ▼
+                                    ADLS (pseudonymized) → ML
 ```
 
-Full architecture detail: [05-architecture.md](05-architecture.md)
+Full architecture detail with tradeoff analysis: [05-architecture.md](05-architecture.md)
 
 ## Roadmap at a Glance
 
@@ -68,7 +70,9 @@ Full roadmap: [09-implementation-roadmap.md](09-implementation-roadmap.md)
 |---|---|---|
 | Primary technique | FF1 (FPE) | Format-preserving; stateless; NIST-standardized; deterministic |
 | Referential key technique | HMAC-SHA-256 | One-way; deterministic; no vault required |
-| Transform engine | Polars 1.x | Right-sized for MB-GB; no Spark overhead |
-| Key store | Azure Key Vault | Native ADF/Databricks integration; HSM-backed |
+| Transform engine | Polars 1.x | Right-sized for MB-GB; no Spark overhead; on-prem deployable without cloud runtime |
+| Deployment target | On-premises | Pseudonymization logic and key access stay within on-prem security boundary |
+| Pipeline placement | TBD (Option A or B) | Pre-ingestion or post-medallion; design is open to either — see [05-architecture.md](05-architecture.md) |
+| Key store | HashiCorp Vault (on-prem) or Azure Key Vault via private link | Keys remain accessible to on-prem service; no key material in cloud compute |
 | PII detection | Microsoft Presidio | Open-source; Python-native; extensible for Korean patterns |
 | Do NOT use | FF3/FF3-1 | NIST-withdrawn Feb 2025 (Beyne 2021 cryptographic weakness) |

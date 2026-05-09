@@ -12,8 +12,8 @@
 | Keyed hash | `hmac` + `hashlib` | stdlib | HMAC-SHA-256 for referential keys (no dependency) |
 | PII detection | Microsoft Presidio | 2.x | NER + regex PII detection; anonymization operators |
 | Korean NLP | `kiwipiepy` or `konlpy` | Latest | Korean tokenizer/NER for Presidio custom recognizer |
-| Key management | Azure Key Vault SDK | `azure-keyvault-secrets` 4.x | Runtime key retrieval via Managed Identity |
-| Azure auth | `azure-identity` | 1.x | DefaultAzureCredential for Managed Identity |
+| Key management | HashiCorp Vault (on-prem) or Azure Key Vault via private link | `hvac` / `azure-keyvault-secrets` 4.x | On-prem key retrieval; no key material leaves on-prem boundary |
+| Azure auth (if AKV) | `azure-identity` | 1.x | Service principal or Managed Identity for AKV access over private link |
 | ADLS I/O | `adlfs` | Latest | `fsspec`-compatible Azure Data Lake Storage driver |
 | Data catalog | Microsoft Purview | Azure-managed | Sensitivity labels, lineage |
 | Orchestration | Azure Data Factory | Azure-managed | Pipeline scheduling, SHIR, activity chaining |
@@ -35,7 +35,7 @@ The current stack uses PySpark on Synapse/Databricks. For the actual data volume
 | Arrow/Parquet native | Via conversion layer | Native Arrow backend; zero-copy Parquet I/O |
 | Spark-specific patterns needed | Yes (RDDs, Catalyst optimizer) | No; standard Python data engineering |
 
-**Decision:** Use Polars for the pseudonymization step. Keep Databricks as the ML training and feature engineering platform (where distributed compute is justified). If data volume growth reaches consistent multi-GB or TB scale, the FF1/HMAC pseudonymization logic can be ported to PySpark UDFs without changing the technique design.
+**Decision:** Use Polars for the pseudonymization step, deployed on-prem as a standalone Python service or containerized process. This eliminates the need for cloud compute (Databricks, Azure Functions) in the pseudonymization path, keeping the service lightweight and independently deployable within the on-prem security boundary. Databricks remains as the ML training and feature engineering platform. If data volume growth reaches consistent multi-GB or TB scale, the FF1/HMAC pseudonymization logic is portable to PySpark UDFs without changing the technique, key management design, or classification manifest schema.
 
 
 ## Polars Pseudonymization Patterns
@@ -119,20 +119,32 @@ PyArrow is used as the I/O layer (Parquet read/write) and the in-memory data int
 - Delta Lake format (via `deltalake` Python library) can be adopted in the Pseudonymized Zone if ACID transactions or time travel are needed; Delta tables are Arrow/Parquet native
 
 
-## Azure Key Vault Integration
+## Key Management Integration (On-Prem Service)
 
-Keys are retrieved at job startup using `DefaultAzureCredential` (resolves to Managed Identity in Azure compute environments):
+The pseudonymization service runs on-prem and retrieves keys from one of two sources:
+
+**Option 1 — HashiCorp Vault (on-prem, preferred)**
+
+HashiCorp Vault deployed on-prem keeps all key material entirely within the on-prem network. The pseudonymization service authenticates via AppRole or a service token:
 
 ```
-azure-identity DefaultAzureCredential
+hvac.Client(url="https://vault.internal:8200", token=service_token)
+    → client.secrets.kv.v2.read_secret_version(path="pseudo/ff1-general")
+    → secret["data"]["data"]["key"]  # AES-256 key material
+```
+
+**Option 2 — Azure Key Vault over Private Link**
+
+If Azure Key Vault is preferred for unified key lifecycle management (rotation policy, audit logs feeding into Azure Monitor), it is accessible from on-prem via ExpressRoute or VPN with a private endpoint. The service authenticates via a service principal credential:
+
+```
+azure-identity ClientSecretCredential(tenant_id, client_id, client_secret)
     → SecretClient(vault_url, credential)
     → client.get_secret("kv-pseudo-general-v1")
     → secret.value  # AES-256 key material
 ```
 
-Keys are never written to disk, environment variables, logs, or pipeline configuration. They are held in memory for the duration of the job and discarded when the process exits.
-
-Key version management: `get_secret("name", version="<version_id>")` allows retrieval of historical key versions for re-pseudonymization of legacy data during key rotation.
+In both cases: keys are never written to disk, environment variables, logs, or pipeline configuration. They are held in memory for the duration of the job and discarded when the process exits. Key version management (retrieving a specific version for re-pseudonymization of historical data) is supported by both Vault and AKV.
 
 
 ## Dependency Summary (requirements.txt skeleton)
@@ -148,7 +160,8 @@ presidio-anonymizer>=2.2.0
 spacy>=3.7.0
 kiwipiepy>=0.17.0
 adlfs>=2024.4.0
-azure-identity>=1.17.0
-azure-keyvault-secrets>=4.8.0
+hvac>=2.3.0                        # HashiCorp Vault client (on-prem KMS)
+azure-identity>=1.17.0             # only if using Azure Key Vault over private link
+azure-keyvault-secrets>=4.8.0      # only if using Azure Key Vault over private link
 azure-monitor-opentelemetry>=1.3.0
 ```

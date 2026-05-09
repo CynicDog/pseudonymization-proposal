@@ -2,21 +2,39 @@
 
 ## Design Principles
 
-- **Keys never co-locate with data.** Key material and pseudonymized data are stored in separate Azure services with separate access controls.
-- **Managed Identity only.** No human ever possesses production encryption keys. All compute (ADF, Databricks, Azure Functions) accesses keys via Azure Managed Identity.
+- **Keys never co-locate with data.** Key material and pseudonymized data are stored in separate systems with separate access controls.
+- **Keys stay within the on-prem boundary.** The pseudonymization service runs on-prem; keys are retrieved from an on-prem KMS (HashiCorp Vault) or from Azure Key Vault over a private link. No key material is exposed to cloud compute environments.
+- **No human access to production key values.** Production keys are accessed only by the pseudonymization service process. Human admins manage key lifecycle (create, rotate, retire) but never retrieve key values directly.
 - **Separate key namespaces by classification tier.** A key compromise affecting general PII must not affect sensitive PII. Keys are isolated per tier.
 - **Key versioning, not invalidation.** Rotation creates a new key version; existing pseudonymized data retains a reference to the version used. Historical data remains readable without mass re-pseudonymization.
-- **All key access is audited.** Every key retrieval is logged immutably in Azure Monitor / Key Vault audit logs.
+- **All key access is audited.** Every key retrieval is logged immutably (Vault audit log or Azure Monitor, depending on KMS choice).
 
 
-## Azure Key Vault Structure
+## Key Store Options
 
-One Key Vault per environment (dev, staging, prod). Key Vaults are deployed with:
-- **Purview mode:** `Enable for Azure Purview` (allows Purview to scan and classify secrets metadata)
-- **Soft delete:** enabled (90-day recovery window)
-- **Purge protection:** enabled (prevents permanent deletion for 90 days; meets PIPA audit retention)
-- **Network:** private endpoint only; no public access
-- **Diagnostic settings:** Key Vault audit logs → Log Analytics Workspace (immutable, 90-day retention minimum)
+Two key store configurations are viable. The choice depends on existing infrastructure and operational preference. The key hierarchy, naming convention, and rotation strategy are identical in both cases.
+
+**Option 1 — HashiCorp Vault (on-prem)**
+
+Deployed as an on-prem Vault cluster (HA configuration recommended). Key material never leaves the on-prem network. The pseudonymization service authenticates via AppRole. Vault audit log streams to a local SIEM or is forwarded to Azure Monitor.
+
+Configuration requirements:
+- KV v2 secrets engine enabled
+- AppRole auth method; one role per service identity (pseudonymization service, admin)
+- Audit device: file or syslog (feed to SIEM for immutable retention)
+- Soft-delete: Vault Enterprise (or simulate via versioning policy in community edition)
+- HA: Raft storage backend with 3+ nodes
+
+**Option 2 — Azure Key Vault (via ExpressRoute / VPN private link)**
+
+Azure Key Vault is deployed with private endpoint, accessible from on-prem over ExpressRoute or site-to-site VPN. The on-prem pseudonymization service authenticates via a service principal (client credentials). This option unifies key lifecycle management with Azure Monitor audit trails and ADF/Databricks integration for any cloud-side key consumers.
+
+Configuration requirements:
+- Private endpoint only; no public network access
+- Soft delete: enabled (90-day recovery window)
+- Purge protection: enabled (meets PIPA audit retention)
+- Diagnostic settings: Key Vault audit logs → Log Analytics Workspace (immutable, 90-day minimum)
+- One Key Vault per environment (dev, staging, prod)
 
 ### Key Hierarchy
 
@@ -48,14 +66,14 @@ Key Vault (prod) — kv-data-platform-prod
 
 | Principal | Key Access | Scope |
 |---|---|---|
-| ADF Managed Identity (prod) | `kv-ff1-general-*`, `kv-hmac-ref-*` | Get secret, latest version only |
-| Pseudonymization Fn / Databricks MI (prod) | All keys | Get secret, specific version (for re-pseudonymization) |
-| Databricks ML cluster MI (prod) | No key access | ML compute never retrieves pseudonymization keys |
-| Data engineers (humans) | No key access in prod | Key Vault RBAC: reader on metadata only, not secret value |
-| Security admin | Emergency break-glass | Separate break-glass procedure; logged; requires approval |
-| Dev / staging Key Vault | Dev team | Full access to dev/staging Key Vault only |
+| On-prem pseudonymization service | All keys (via AppRole / service principal) | Read key value; latest version for new runs; specific version for re-pseudonymization |
+| ADF Managed Identity | No direct key access | ADF orchestrates the pipeline but does not perform pseudonymization |
+| Databricks ML cluster | No key access | ML compute never retrieves pseudonymization keys; operates on already-pseudonymized data |
+| Data engineers (humans) | No key value access in prod | Metadata/policy management only; never retrieve secret values |
+| Security admin | Emergency break-glass | Separate procedure; logged; requires approval workflow |
+| Dev / staging key store | Dev team service accounts | Full access to non-prod environments only |
 
-**Key principle:** ML training and serving compute (Databricks ML clusters, inference endpoints) **never** have access to pseudonymization keys. They consume pseudonymized data and produce predictions; they are not capable of reversing pseudonymization.
+**Key principle:** Only the on-prem pseudonymization service ever retrieves key values. Cloud compute (Databricks, ADF activities, ML inference) has no key access. This is enforced by network boundary (keys accessible from on-prem only) and access control policy.
 
 
 ## Key Rotation Strategy

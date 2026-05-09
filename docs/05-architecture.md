@@ -2,171 +2,208 @@
 
 ## Design Principles
 
-1. **Pseudonymize once, use everywhere.** Pseudonymization happens exactly once, at the ingestion boundary. All downstream systems consume only pseudonymized data.
-2. **Keys never travel with data.** Encryption keys live exclusively in Azure Key Vault, accessed at runtime via Managed Identity. No key material appears in pipeline configuration, environment variables, or data files.
-3. **Raw data is break-glass only.** The Raw Zone is accessible only via audited, approved break-glass procedures. Normal data engineering and ML workflows operate exclusively on the Pseudonymized Zone.
-4. **Determinism by default.** All production pseudonymization is deterministic (same input + same key → same output) to preserve referential integrity for ML JOIN operations.
-5. **Audit everything.** Every access to the Raw Zone and every Key Vault key retrieval is logged immutably in Azure Monitor.
+1. **Pseudonymize once, use everywhere.** Pseudonymization happens at a single designated boundary. All downstream systems consume only pseudonymized data.
+2. **Keys never travel with data.** Encryption keys live in an isolated key store (on-prem KMS or Azure Key Vault via private link), accessed at runtime. No key material appears in pipeline configuration, environment variables, or data files.
+3. **Pseudonymization runs on-prem.** The pseudonymization service is deployed on-premises, not on cloud compute. This keeps key material and the pseudonymization logic within the on-prem security boundary regardless of where the data boundary is drawn.
+4. **Placement is a policy decision, not a technical one.** The pseudonymization module is designed identically regardless of where in the pipeline it is placed. Two integration points are viable; the choice depends on data governance policy and pipeline design.
+5. **Determinism by default.** All production pseudonymization is deterministic (same input + same key → same output) to preserve referential integrity for downstream JOIN operations.
+6. **Audit everything.** Every pseudonymization job execution and every key retrieval is logged immutably.
 
+## The On-Prem Pseudonymization Service
 
-## Three-Zone Architecture
+The pseudonymization layer is a standalone Python service (Polars + ff3 + HMAC — see [06-technology-stack.md](06-technology-stack.md)) packaged for on-prem deployment. It can run as:
+
+- A Docker container on an on-prem application server
+- A Linux/Windows batch process triggered by a scheduler or file-arrival event
+- A lightweight HTTP service (FastAPI) called by adjacent pipeline components
+
+The service reads from a local or network-accessible data source, applies per-column pseudonymization per the classification manifest, writes the pseudonymized output, and emits an audit log event. It does not depend on Databricks, Azure Functions, or any cloud compute runtime. Cloud resources it may interact with are limited to storage (ADLS read/write) and key retrieval (Azure Key Vault via private link, or on-prem HashiCorp Vault).
+
+## Integration Point Options
+
+The placement of this service within the pipeline is not yet decided. Two viable options exist, each with distinct data governance tradeoffs. The module design is identical in both cases.
+
+### Option A — Pre-Ingestion (Pseudonymize Before Cloud)
+
+Data is pseudonymized on-prem before ADF ever touches it. The cloud receives only pseudonymized data from the start.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  ZONE 1 — SOURCE LAYER (On-Premises)                            │
-│                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │  Operational │    │  Relational  │    │  Other       │       │
-│  │  DB          │    │  DB (MSSQL,  │    │  Sources     │       │
-│  │              │    │  Oracle, etc)│    │              │       │
-│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘       │
-│         └────────────────────┴────────────────────┘              │
-│                              │                                   │
-│                    ADF Self-Hosted Integration                   │
-│                    Runtime (SHIR)                                │
-│                    TLS 1.2+ encrypted transit                    │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  ZONE 2 — PSEUDONYMIZATION LAYER (Azure)                        │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  Azure Data Lake Storage — Raw Zone                        │  │
-│  │  • Encrypted at rest (Azure Storage Service Encryption)    │  │
-│  │  • Network: private endpoint only                          │  │
-│  │  • Access: break-glass + ADF Managed Identity only         │  │
-│  │  • All access logged to Azure Monitor                      │  │
-│  └────────────────────────┬───────────────────────────────────┘  │
-│                           │                                      │
-│                    ADF Pipeline triggers                         │
-│                    pseudonymization job                          │
-│                           │                                      │
-│  ┌────────────────────────▼───────────────────────────────────┐  │
-│  │  Pseudonymization Job (Azure Functions or Databricks NB)   │  │
-│  │                                                            │  │
-│  │  1. Presidio Analyzer                                      │  │
-│  │     └─ Scan columns → identify PII entities + types        │  │
-│  │                                                            │  │
-│  │  2. Technique Dispatcher                                   │  │
-│  │     ├─ General PII fields    → FF1 (general key NS)        │  │
-│  │     ├─ Sensitive PII fields  → FF1 (sensitive key NS)      │  │
-│  │     ├─ Referential keys      → HMAC-SHA-256                │  │
-│  │     └─ Free-text fields      → Presidio redact / masking   │  │
-│  │                                                            │  │
-│  │  3. Key Retrieval                                          │  │
-│  │     └─ Azure Key Vault (Managed Identity, no hardcoding)   │  │
-│  │                                                            │  │
-│  │  4. Polars / PyArrow Transform                             │  │
-│  │     └─ Columnar in-memory processing; Parquet output       │  │
-│  └────────────────────────┬───────────────────────────────────┘  │
-│                           │                                      │
-│  ┌────────────────────────▼───────────────────────────────────┐  │
-│  │  Azure Data Lake Storage — Pseudonymized Zone              │  │
-│  │  • Parquet / Delta format                                  │  │
-│  │  • Encrypted at rest                                       │  │
-│  │  • Access: data engineers, ML engineers (RBAC)             │  │
-│  │  • Sensitivity labels via Microsoft Purview                │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  ZONE 3 — CONSUMPTION LAYER (Azure)                             │
-│                                                                  │
-│  ┌──────────────────┐  ┌───────────────────┐  ┌─────────────┐  │
-│  │  Databricks      │  │  ML Inference     │  │  Analytics  │  │
-│  │  (Feature Eng.   │  │  Endpoint         │  │  / BI       │  │
-│  │   + ML Training) │  │  (Pseudonymized   │  │  (Aggregate │  │
-│  │                  │  │   features in/out)│  │   views)    │  │
-│  └──────────────────┘  └───────────────────┘  └─────────────┘  │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │  Application Layer (Authorized re-identification only)     │  │
-│  │  • Separate RBAC scope                                     │  │
-│  │  • Pseudonym → identity translation for authorized outputs │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+On-Prem Network
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  Source DB(s)                                                │
+│      │                                                       │
+│      ▼                                                       │
+│  On-Prem Pseudonymization Service                            │
+│  ├── Reads raw data from source DB (or staging file area)    │
+│  ├── Applies FF1 / HMAC per classification manifest          │
+│  ├── Fetches keys from on-prem KMS (HashiCorp Vault or AKV   │
+│  │   via private link)                                       │
+│  └── Writes pseudonymized output to staging area             │
+│      │                                                       │
+│      ▼                                                       │
+│  Pseudonymized Staging Area (on-prem)                        │
+│      │                                                       │
+└──────┼───────────────────────────────────────────────────────┘
+       │  ADF SHIR (TLS 1.2+)
+       │  Ingests pseudonymized data — no raw PII ever enters cloud
+       ▼
+Azure Cloud
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  ADLS — Ingested Zone (pseudonymized)                        │
+│      │                                                       │
+│      ▼                                                       │
+│  Databricks (medallion: bronze → silver → gold)              │
+│  Feature engineering, ML training                            │
+│      │                                                       │
+│      ▼                                                       │
+│  ML Inference Endpoint / Analytics / BI                      │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
+**Characteristics:**
+- Raw PII is never transmitted to or stored in the cloud
+- Cloud infrastructure requires no raw-zone access controls or break-glass procedures for PII
+- Strongest regulatory posture: cloud provider processes no personal data at all
+- Pseudonymization applied to source data as-is, before any enrichment or cross-table joins in the medallion
+- If cross-table consistency is needed (e.g., `customer_id` pseudonymized identically across multiple source tables), the service must be given a unified view or run with a shared key and classification manifest across all source tables
+
+### Option B — Post-Medallion Egress (Pseudonymize After Cloud Enrichment)
+
+Raw data is ingested into the cloud, processed through the Databricks medallion (bronze → silver → gold), and the enriched output is egressed back to on-prem for pseudonymization before being re-ingested as the final, pseudonymized dataset.
+
+```
+On-Prem Network
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  Source DB(s)                                                │
+│      │                                                       │
+└──────┼───────────────────────────────────────────────────────┘
+       │  ADF SHIR — raw data ingestion (TLS 1.2+)
+       ▼
+Azure Cloud
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  ADLS — Raw Zone                                             │
+│  (raw PII present; strict access controls required)          │
+│      │                                                       │
+│      ▼                                                       │
+│  Databricks Medallion Pipeline                               │
+│  Bronze: raw ingest                                          │
+│  Silver: cleanse, join, conform                              │
+│  Gold: curated domain entities (customer 360, unified claim) │
+│      │                                                       │
+│      │  Egress: ADF SHIR or ADLS → on-prem transfer         │
+│      │  (gold-layer output exported to on-prem)              │
+└──────┼───────────────────────────────────────────────────────┘
+       │
+       ▼
+On-Prem Network
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  On-Prem Pseudonymization Service                            │
+│  ├── Receives gold-layer export (enriched, joined entities)  │
+│  ├── Applies FF1 / HMAC per classification manifest          │
+│  └── Writes pseudonymized output to staging area             │
+│      │                                                       │
+└──────┼───────────────────────────────────────────────────────┘
+       │  ADF SHIR — re-ingestion of pseudonymized data
+       ▼
+Azure Cloud
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  ADLS — Pseudonymized Zone                                   │
+│      │                                                       │
+│      ▼                                                       │
+│  ML Feature Store / Inference Endpoint / Analytics           │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Characteristics:**
+- Pseudonymization is applied to enriched, cross-table-joined entities — the gold layer represents a cleaner, more complete view of each entity before pseudonymization
+- Cross-table referential integrity is naturally handled by the medallion joins; all entity references in the gold output are pseudonymized in a single pass
+- Raw PII exists in the cloud (Raw Zone and Bronze/Silver layers) — these layers require their own access controls, break-glass procedures, and PIPA-compliant safeguards
+- Additional data round-trip (cloud → on-prem → cloud) adds pipeline latency and egress cost
+- The PIPA compliance burden is higher: raw-data cloud storage must be documented and justified in the risk assessment
+
+## Option Comparison
+
+| Concern | Option A (Pre-Ingestion) | Option B (Post-Medallion) |
+|---|---|---|
+| Raw PII in cloud | Never | Yes (Raw/Bronze/Silver zones) |
+| PIPA compliance complexity | Lower | Higher (raw-zone controls required) |
+| Data quality at pseudonymization | Source-level (pre-enrichment) | Gold-level (post-enrichment, joined) |
+| Cross-table referential integrity | Requires coordinated manifest across source tables | Handled naturally by medallion joins |
+| Pipeline round-trips | One (on-prem → cloud) | Three (on-prem → cloud → on-prem → cloud) |
+| Pseudonymization service complexity | Simpler (reads source tables directly) | Slightly higher (reads gold-layer export) |
+| Cloud architecture | Simpler (no raw zone controls needed) | More complex (raw zone isolation required) |
 
 ## Supporting Services
 
+The following services are shared across both options.
+
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Azure Key Vault                                          │
-│  • FF1 keys (general tier, sensitive tier)               │
-│  • HMAC signing key                                      │
-│  • AES-SIV key (unstructured fields)                     │
-│  • Access: Managed Identity only (ADF, Databricks, Fn)   │
-│  • Audit: all key access → Azure Monitor                 │
-└──────────────────────────────────────────────────────────┘
+On-Prem Key Management
+┌─────────────────────────────────────────────────────────┐
+│  HashiCorp Vault (on-prem) — preferred for on-prem keys │
+│  or                                                     │
+│  Azure Key Vault (accessed via ExpressRoute/private link)│
+│                                                         │
+│  • FF1 keys (general tier, sensitive tier)              │
+│  • HMAC signing key                                     │
+│  • AES-SIV key                                          │
+│  • No human access to key values in prod                │
+│  • All access audited                                   │
+└─────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────┐
-│  Microsoft Purview                                        │
-│  • Sensitivity labels on all ADLS assets                 │
-│  • Data lineage: on-prem → Raw → Pseudo → ML             │
-│  • Column-level classification metadata                  │
-└──────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────┐
-│  Azure Monitor + Log Analytics                            │
-│  • Raw Zone access log (immutable)                       │
-│  • Key Vault access log (immutable)                      │
-│  • Pipeline execution log (success/failure, row counts)  │
-│  • Alert rules: unexpected raw zone access, key errors   │
-└──────────────────────────────────────────────────────────┘
+Azure Governance (Cloud Side)
+┌─────────────────────────────────────────────────────────┐
+│  Microsoft Purview                                      │
+│  • Sensitivity labels on all ADLS assets                │
+│  • Data lineage tracking                                │
+│                                                         │
+│  Azure Monitor + Log Analytics                          │
+│  • Pipeline execution logs                              │
+│  • ADLS access logs (raw zone if Option B)              │
+│  • Pseudonymization audit events (forwarded from on-prem)│
+└─────────────────────────────────────────────────────────┘
 ```
 
+## Pseudonymization Service — Internal Flow (Both Options)
 
-## Data Flow Detail
+Regardless of integration point, the pseudonymization service executes the same internal steps:
 
-### Ingestion Flow (On-Prem → Raw Zone)
+```
+Input data (source DB extract or gold-layer export)
+    │
+    ▼
+Column scan (Presidio Analyzer + classification manifest lookup)
+    │ → Identify PII/SPII columns and their tiers
+    ▼
+Key retrieval (on-prem KMS or Azure Key Vault via private link)
+    │ → One key fetch per tier per job run; held in memory only
+    ▼
+Technique dispatch per column
+    ├── FF1 (general tier key)    → general PII fields
+    ├── FF1 (sensitive tier key)  → SPII fields
+    ├── HMAC-SHA-256              → referential join keys
+    └── Presidio redact           → free-text fields
+    │
+    ▼
+Polars columnar transform (in-memory, streaming for large files)
+    │
+    ▼
+Pseudonymized output (Parquet) + Parquet schema metadata (technique, key version per column)
+    │
+    ▼
+Audit log event emitted (job ID, timestamp, source, row count, columns, key versions, status)
+```
 
-1. ADF pipeline scheduled or event-triggered
-2. SHIR connects to on-prem DB using encrypted connection (TLS 1.2+, credential in ADF Linked Service / Key Vault reference)
-3. Data written to Raw Zone in ADLS as Parquet (snappy compression)
-4. ADF activity completion triggers pseudonymization job
+## Scalability Notes
 
-### Pseudonymization Flow (Raw Zone → Pseudonymized Zone)
+The on-prem pseudonymization service is stateless and horizontally scalable — multiple instances can run concurrently on different source tables without coordination, since each instance only needs its own key fetch and classification manifest. For the current MB-scale data volumes, a single instance is sufficient. For GB-scale files, Polars streaming mode (`.sink_parquet()`) processes without materializing the full file in memory.
 
-1. Pseudonymization job reads raw Parquet from ADLS using Managed Identity
-2. Presidio Analyzer scans a sample of each column (or uses the pre-built classification inventory) to confirm entity types
-3. Technique Dispatcher applies per-column technique based on classification:
-   - FF1 with appropriate key namespace (fetched from Key Vault)
-   - HMAC-SHA-256 with signing key (fetched from Key Vault)
-   - Presidio redaction for free-text
-4. Polars transform executes column-by-column in memory
-5. Output written as Parquet to Pseudonymized Zone; column metadata (classification tier, technique applied, key version) embedded in Parquet schema metadata
-6. Pipeline completion event logged to Azure Monitor; Purview lineage updated
-
-### Consumption Flow (Pseudonymized Zone → ML)
-
-1. Databricks reads pseudonymized Parquet from ADLS
-2. Feature engineering uses pseudonymized entity IDs as JOIN keys (deterministic pseudonyms enable cross-table joins)
-3. ML model trained on pseudonymized features; no PII in model inputs, weights, or logs
-4. Inference endpoint receives pseudonymized feature vector; returns prediction attached to pseudonym
-5. Application layer (if authorized re-identification is required for output) performs pseudonym → identity translation with separate RBAC and audit logging
-
-
-## Network and Access Control
-
-| Zone / Service | Network Boundary | Access Principal | Notes |
-|---|---|---|---|
-| On-prem DB | Private network | ADF SHIR service account | Firewall rules: SHIR IP only |
-| ADLS Raw Zone | Private endpoint | ADF Managed Identity | No public endpoint |
-| ADLS Pseudonymized Zone | Private endpoint | ADF MI, Databricks MI, ML Endpoint MI | No public endpoint |
-| Azure Key Vault | Private endpoint | ADF MI, Databricks MI, Functions MI | No human access in prod |
-| Databricks | VNet injection | Data engineers, ML engineers | IP allowlist + AAD auth |
-| ML Inference Endpoint | Private or public (TLS) | Application services | JWT/OAuth2 auth |
-
-
-## Scalability Considerations
-
-For the current data scale (MB, occasionally GB):
-
-- The pseudonymization job runs on a single Azure Functions Premium instance or a Databricks single-node cluster (not a full Spark cluster). Polars handles GB-scale data on a single node efficiently.
-- If data volume grows toward 10+ GB per batch, Polars streaming mode (`scan_parquet` + lazy evaluation) processes data without loading the full file into memory.
-- If data volume reaches consistent multi-GB or TB scale, the pseudonymization logic can be ported to Databricks PySpark with the same Presidio + FF1/HMAC approach — the technique design does not change, only the execution engine.
-
-The proposed architecture is designed to scale out without architectural change. The pseudonymization layer is stateless (no vault), so horizontal scaling requires only adding compute, not distributed vault coordination.
+If data volumes grow to TB-scale in the future, the pseudonymization logic (FF1/HMAC column transforms) is portable to a distributed engine (PySpark UDFs) without changing the technique, key management design, or classification manifest schema.
