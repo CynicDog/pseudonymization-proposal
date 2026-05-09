@@ -4,7 +4,6 @@ Research-backed design proposal for a pseudonymization layer at the enterprise d
 
 This repository is a **proposal document set** — not implementation code. It is intended to be read by the implementation team (or a separate implementation repository) as the authoritative design specification.
 
----
 
 ## Intended Audience
 
@@ -16,7 +15,6 @@ This repository is a **proposal document set** — not implementation code. It i
 | Legal / Compliance | 02, 10 |
 | Engineering Lead | 01, 05, 09 |
 
----
 
 ## Document Index
 
@@ -33,7 +31,6 @@ This repository is a **proposal document set** — not implementation code. It i
 | 09 | [Implementation Roadmap](docs/09-implementation-roadmap.md) | Three-phase sprint checklist for the implementation team |
 | 10 | [Compliance & Audit Framework](docs/10-compliance-audit.md) | PIPA compliance checklist, audit architecture, risk metrics |
 
----
 
 ## How to Use This Repo
 

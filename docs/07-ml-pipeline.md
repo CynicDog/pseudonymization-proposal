@@ -10,7 +10,6 @@ Machine learning models in this platform must operate exclusively on pseudonymiz
 - **Inference:** input features are pseudonymized; output predictions are attached to pseudonyms, not raw identifiers
 - **Logging and monitoring:** model serving logs contain no PII; pseudonyms only
 
----
 
 ## Design Requirements for Pseudonymized ML Data
 
@@ -33,7 +32,6 @@ Pseudonymization must not distort the statistical relationships between features
 - Count, frequency, and ratio features computed on pseudonymized data are equivalent to those computed on raw data
 - Time-series ordering (event timestamps) is not affected — timestamps are not pseudonymized by default, or are shifted uniformly per entity (see date handling note below)
 
----
 
 ## Pseudonymized Feature Store Design
 
@@ -63,7 +61,6 @@ Registered Model (MLflow Model Registry)
     • No PII recoverable from weights
 ```
 
----
 
 ## Inference Pipeline Design
 
@@ -94,7 +91,6 @@ Application Layer
 
 **Key constraint:** The application layer that translates raw IDs to pseudonyms before calling the inference endpoint must have its own RBAC scope and audit trail, separate from the data platform. The inference endpoint itself never receives raw IDs.
 
----
 
 ## Date and Timestamp Handling
 
@@ -106,7 +102,6 @@ Timestamps and dates are often not considered PII in isolation but can become qu
 
 Date shifting ensures that time-series features (e.g., "days since last claim", age-based risk features) remain mathematically valid after pseudonymization.
 
----
 
 ## ML Scenario Variants
 
@@ -146,7 +141,6 @@ Some downstream use cases require attaching model predictions to identifiable cu
 - **Design:** Prediction output carries pseudonym only; re-identification occurs in a separate authorized application layer with its own RBAC, audit logging, and break-glass procedure
 - **No raw PII ever enters the ML platform or model serving logs**
 
----
 
 ## Anti-Patterns to Avoid
 

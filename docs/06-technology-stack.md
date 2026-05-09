@@ -20,7 +20,6 @@
 | Audit logging | Azure Monitor SDK | `azure-monitor-opentelemetry` | Pipeline + key access event logging |
 | ML runtime | Databricks Runtime | 14.x LTS | Feature engineering and ML training on pseudonymized data |
 
----
 
 ## Why Polars Instead of PySpark
 
@@ -38,7 +37,6 @@ The current stack uses PySpark on Synapse/Databricks. For the actual data volume
 
 **Decision:** Use Polars for the pseudonymization step. Keep Databricks as the ML training and feature engineering platform (where distributed compute is justified). If data volume growth reaches consistent multi-GB or TB scale, the FF1/HMAC pseudonymization logic can be ported to PySpark UDFs without changing the technique design.
 
----
 
 ## Polars Pseudonymization Patterns
 
@@ -80,7 +78,6 @@ schema_metadata = {
 
 This metadata enables downstream systems to know which columns are pseudonymized, which technique was applied, and which key version was used — essential for re-pseudonymization during key rotation.
 
----
 
 ## Korean PII Patterns for Presidio
 
@@ -112,7 +109,6 @@ Standard Presidio ships with recognizers for English and global PII (email, phon
 - Use `kiwipiepy` POS tagger or `konlpy` for NER-based detection in free-text; use column-name heuristics (`*_name`, `*_성명`, `*_이름`) for structured field detection
 - Classification tier: PII (General Identifier)
 
----
 
 ## PyArrow Integration
 
@@ -122,7 +118,6 @@ PyArrow is used as the I/O layer (Parquet read/write) and the in-memory data int
 - `adlfs` provides an `fsspec`-compatible filesystem driver for ADLS Gen2; Polars and PyArrow both support `fsspec` for transparent cloud storage I/O
 - Delta Lake format (via `deltalake` Python library) can be adopted in the Pseudonymized Zone if ACID transactions or time travel are needed; Delta tables are Arrow/Parquet native
 
----
 
 ## Azure Key Vault Integration
 
@@ -139,7 +134,6 @@ Keys are never written to disk, environment variables, logs, or pipeline configu
 
 Key version management: `get_secret("name", version="<version_id>")` allows retrieval of historical key versions for re-pseudonymization of legacy data during key rotation.
 
----
 
 ## Dependency Summary (requirements.txt skeleton)
 

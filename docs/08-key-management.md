@@ -8,7 +8,6 @@
 - **Key versioning, not invalidation.** Rotation creates a new key version; existing pseudonymized data retains a reference to the version used. Historical data remains readable without mass re-pseudonymization.
 - **All key access is audited.** Every key retrieval is logged immutably in Azure Monitor / Key Vault audit logs.
 
----
 
 ## Azure Key Vault Structure
 
@@ -44,7 +43,6 @@ Key Vault (prod) — kv-data-platform-prod
 - PIPA risk assessment can be scoped per tier: compromise of general PII key is a lower-severity incident than compromise of SPII key
 - Access control can be differentiated: a broader set of authorized systems may access the general PII key; the SPII key is restricted to a smaller set of explicitly authorized compute identities
 
----
 
 ## Access Control Model
 
@@ -59,7 +57,6 @@ Key Vault (prod) — kv-data-platform-prod
 
 **Key principle:** ML training and serving compute (Databricks ML clusters, inference endpoints) **never** have access to pseudonymization keys. They consume pseudonymized data and produce predictions; they are not capable of reversing pseudonymization.
 
----
 
 ## Key Rotation Strategy
 
@@ -89,7 +86,6 @@ Key rotation does not immediately invalidate existing pseudonymized data. The ap
 
 This approach ensures continuous availability of pseudonymized data during key rotation with no pipeline downtime.
 
----
 
 ## Tweak Management for FF1
 
@@ -102,7 +98,6 @@ FF1 supports an optional "tweak" parameter — a domain-specific constant that d
 
 Tweak values should be stored in pipeline configuration (not Key Vault) alongside the column classification inventory.
 
----
 
 ## Key Metadata and Audit Records
 
@@ -132,7 +127,6 @@ For every pseudonymization job run, the following must be recorded in the audit 
 
 This record constitutes the audit trail required by the PIPC guidelines (see [02-regulatory-context.md](02-regulatory-context.md)) and enables PIPA compliance documentation.
 
----
 
 ## Key Compromise Response
 

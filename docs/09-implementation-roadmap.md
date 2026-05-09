@@ -2,7 +2,6 @@
 
 This document is designed to serve as a **sprint backlog** for the implementation repository. Each phase produces a concrete, testable deliverable. Tasks are ordered by dependency; items within a phase can be parallelized.
 
----
 
 ## Phase 1 — Foundation (Weeks 1–4)
 
@@ -59,7 +58,6 @@ This document is designed to serve as a **sprint backlog** for the implementatio
 - [ ] Enable diagnostic logging: ADLS access logs → Log Analytics Workspace
 - [ ] Apply Microsoft Purview sensitivity labels to both containers
 
----
 
 ## Phase 2 — Pipeline Integration (Weeks 5–8)
 
@@ -107,7 +105,6 @@ This document is designed to serve as a **sprint backlog** for the implementatio
 - [ ] Run a simple baseline ML model on pseudonymized features; compare AUC/F1 to baseline trained on raw data — expect zero meaningful difference (bijective transform preserves all statistical structure)
 - [ ] Confirm: no raw PII column appears in the final feature DataFrame
 
----
 
 ## Phase 3 — Hardening & Compliance (Weeks 9–12)
 
@@ -154,7 +151,6 @@ This document is designed to serve as a **sprint backlog** for the implementatio
 - [ ] ML engineering sign-off: feature store and inference pipeline validated
 - [ ] Production go-live approval
 
----
 
 ## Operational Runbook Outline (Post-Launch)
 

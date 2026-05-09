@@ -22,7 +22,6 @@ Under Article 28-2 of the amended PIPA, pseudonymized personal information may b
 
 Machine learning development and model training fall under category 2 (scientific/industrial research), making pseudonymized ML pipelines legally permissible under PIPA — provided proper pseudonymization safeguards are in place.
 
----
 
 ## PIPC Guidelines (개인정보보호위원회)
 
@@ -60,7 +59,6 @@ Organizations processing pseudonymized data must:
 - Control third-party provision: if pseudonymized data is shared with a third party, additional safeguards and contractual obligations apply
 - Maintain audit records: all stages of the pseudonymization process must be documented and retained
 
----
 
 ## KISA and K-ISMS
 
@@ -72,7 +70,6 @@ The Korea Internet & Security Agency (KISA, 한국인터넷진흥원) operates u
 
 K-ISMS-P certification is the leading Korean information security certification and is widely expected by regulators, enterprise clients, and partners. The pseudonymization controls described in this proposal align with K-ISMS-P control requirements for personal information processing.
 
----
 
 ## Compliance Posture
 
@@ -93,7 +90,6 @@ Unlike EU GDPR's prescriptive Recital 26 guidance, **PIPA does not mandate speci
 | Audit trail | Immutable logs: who triggered pseudonymization, when, on which dataset |
 | Re-identification prevention | Raw zone break-glass access only; keys isolated in Key Vault |
 
----
 
 ## GDPR Alignment Note
 

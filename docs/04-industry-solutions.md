@@ -4,7 +4,6 @@
 
 This document surveys the current landscape of pseudonymization and data privacy tooling — open-source libraries, cloud-managed services, and commercial enterprise platforms. Each is evaluated in the context of this company's infrastructure (Azure-centric, ADF + Databricks, MB-GB data scale, Korean PII patterns).
 
----
 
 ## Open-Source Tools (Recommended Stack)
 
@@ -35,7 +34,6 @@ python -m spacy download en_core_web_lg
 
 For Korean text, a Korean spaCy model or a `kiwipiepy`-based custom NER component should be added.
 
----
 
 ### ff3 (PyPI)
 
@@ -57,7 +55,6 @@ original  = cipher.decrypt(pseudonym)
 - Minimum domain constraint: radix^minlen ≥ 100 (satisfied by all standard PII field types)
 - Use FF1 mode only (the library supports both FF1 and FF3-1; FF3-1 is cryptographically broken — see [03-pseudonymization-techniques.md](03-pseudonymization-techniques.md))
 
----
 
 ### py4phi
 
@@ -68,7 +65,6 @@ A DataFrame encryption library supporting Polars, Pandas, and PySpark as backend
 
 **Role in this proposal:** AES-based encryption for fields where FPE format preservation is not required (e.g., AES-SIV equivalent for variable-length blobs). Also useful as a wrapper for key file management when prototyping the pseudonymization module.
 
----
 
 ### scrubadub
 
@@ -79,7 +75,6 @@ Regex and rule-based PII scrubber for unstructured text. Detects and redacts nam
 
 **Role:** Secondary detection layer for free-text fields (claim notes, customer service transcripts, policy remarks) where Presidio NER may be supplemented with lightweight regex fallback.
 
----
 
 ### Faker / Mimesis
 
@@ -89,7 +84,6 @@ Synthetic data generation libraries producing realistic-looking but entirely fic
 
 **Role:** Development and test dataset generation only. These libraries are non-deterministic and irreversible — they are not suitable for production pseudonymization pipelines where referential integrity across runs is required.
 
----
 
 ### Apache Ranger / Apache Atlas
 
@@ -97,7 +91,6 @@ Synthetic data generation libraries producing realistic-looking but entirely fic
 
 **Applicability:** If the team adopts Databricks Unity Catalog, Ranger/Atlas are superseded. If not, Ranger can enforce column-level masking policies in Databricks SQL; Atlas can track data lineage from raw to pseudonymized zone. These are optional infrastructure additions, not core pseudonymization components.
 
----
 
 ## Cloud-Managed Services
 
@@ -114,7 +107,6 @@ Microsoft Purview (formerly Azure Purview) is a unified data governance service 
 
 **Recommendation:** Adopt Purview as the classification metadata layer. It is available as part of Azure enterprise agreements and integrates directly with the existing Azure infrastructure.
 
----
 
 ### Google Cloud Sensitive Data Protection (Cloud DLP)
 
@@ -122,13 +114,11 @@ Google's managed PII detection and pseudonymization service. Supports FPE-FFX (c
 
 **Not recommended for this stack.** The company's infrastructure is Azure-centric (ADF, ADLS, Databricks on Azure). Introducing GCP DLP creates a cross-cloud dependency, adds latency for data that lives in Azure, complicates IAM management, and adds cost for data egress. The open-source stack (Presidio + ff3) achieves equivalent functionality without this coupling.
 
----
 
 ### AWS Macie / AWS Glue DataBrew
 
 AWS-native PII discovery (Macie) and data preparation / masking (DataBrew). Not applicable to an Azure-based stack.
 
----
 
 ## Enterprise Commercial Platforms (Reference Only)
 
@@ -152,7 +142,6 @@ Legacy enterprise platform for data masking and subsetting. Supports FPE (AES-25
 
 **Assessment:** Complex deployment, declining ecosystem support, not a fit for a modern Azure + Polars stack.
 
----
 
 ## Recommendation Summary
 

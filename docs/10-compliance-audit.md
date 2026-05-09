@@ -6,7 +6,6 @@ This document provides the compliance checklist, audit architecture, and operati
 
 For regulatory background, see [02-regulatory-context.md](02-regulatory-context.md). For key management audit controls, see [08-key-management.md](08-key-management.md).
 
----
 
 ## PIPA Compliance Checklist
 
@@ -43,7 +42,6 @@ Based on the PIPC "Comprehensive Guidelines on Processing Pseudonymized Data" (S
 - [ ] **Quarterly access review** — RBAC assignments reviewed; any unnecessary permissions revoked
 - [ ] **PIPA compliance documentation maintained** — All required records (preliminary plan, risk assessment, audit logs) retained for minimum 3 years (PIPA retention guidance)
 
----
 
 ## Audit Architecture
 
@@ -95,7 +93,6 @@ Based on the PIPC "Comprehensive Guidelines on Processing Pseudonymized Data" (S
 | Pseudonymized zone access | ADLS diagnostic log | 90 days | Normal operational access |
 | RBAC change | Azure AD audit log | 90 days | Access control change tracking |
 
----
 
 ## Re-identification Risk Metrics
 
@@ -142,7 +139,6 @@ unexpected_access_count = raw_zone_access_events WHERE principal NOT IN [adf_mi,
 
 Target: 0 unexpected accesses. Any non-zero value triggers an immediate security review.
 
----
 
 ## PIPA Audit Response Pack
 
@@ -163,7 +159,6 @@ In the event of a PIPC inspection or complaint:
 2. Prepare KQL queries for Log Analytics to export specific time-range audit logs
 3. Engage legal counsel with PIPA expertise before responding to the PIPC
 
----
 
 ## Purview Lineage as Compliance Evidence
 

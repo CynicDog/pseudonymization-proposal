@@ -8,7 +8,6 @@
 4. **Determinism by default.** All production pseudonymization is deterministic (same input + same key → same output) to preserve referential integrity for ML JOIN operations.
 5. **Audit everything.** Every access to the Raw Zone and every Key Vault key retrieval is logged immutably in Azure Monitor.
 
----
 
 ## Three-Zone Architecture
 
@@ -90,7 +89,6 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
----
 
 ## Supporting Services
 
@@ -120,7 +118,6 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
----
 
 ## Data Flow Detail
 
@@ -151,7 +148,6 @@
 4. Inference endpoint receives pseudonymized feature vector; returns prediction attached to pseudonym
 5. Application layer (if authorized re-identification is required for output) performs pseudonym → identity translation with separate RBAC and audit logging
 
----
 
 ## Network and Access Control
 
@@ -164,7 +160,6 @@
 | Databricks | VNet injection | Data engineers, ML engineers | IP allowlist + AAD auth |
 | ML Inference Endpoint | Private or public (TLS) | Application services | JWT/OAuth2 auth |
 
----
 
 ## Scalability Considerations
 
