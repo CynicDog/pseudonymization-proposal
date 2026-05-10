@@ -35,12 +35,12 @@ Microdata masking methods split into two families. **Perturbative** methods alte
 > Replace each continuous value with the original value plus a random draw from a noise distribution, preserving distributional shape while obscuring exact values.
 
 $$
-Z = X + \varepsilon, \quad \varepsilon \sim \mathcal{N}(0,\, \Sigma_\varepsilon), \quad \Sigma_\varepsilon = \alpha \cdot \operatorname{diag}(\sigma_1^2, \ldots, \sigma_p^2)
+Z = X + \varepsilon, \quad \varepsilon \sim \mathcal{N}(0,\, \Sigma_\varepsilon), \quad \Sigma_\varepsilon = \alpha \cdot \mathrm{diag}(\sigma_1^2, \ldots, \sigma_p^2)
 $$
 
 The original data matrix $X$ ($n \times p$) is transformed by adding a noise matrix $\varepsilon$ whose rows are drawn independently from a zero-mean multivariate normal distribution. The scalar $\alpha$ controls noise magnitude relative to each variable's marginal variance $\sigma_j^2$, so protection is proportional across variables of different scales.
 
-**Uncorrelated noise** (diagonal $\Sigma_\varepsilon$) preserves column means exactly, since $\mathbb{E}[Z] = \mathbb{E}[X]$, but inflates the covariance matrix: $\operatorname{Cov}(Z) = \operatorname{Cov}(X) + \Sigma_\varepsilon$. Analysts who are unaware of the noise will overestimate variances and attenuate correlations.
+**Uncorrelated noise** (diagonal $\Sigma_\varepsilon$) preserves column means exactly, since $\mathbb{E}[Z] = \mathbb{E}[X]$, but inflates the covariance matrix: $\mathrm{Cov}(Z) = \mathrm{Cov}(X) + \Sigma_\varepsilon$. Analysts who are unaware of the noise will overestimate variances and attenuate correlations.
 
 **Correlated noise** sets $\Sigma_\varepsilon = \alpha \cdot \Sigma_X$, drawing noise that matches the correlation structure of $X$. Kim (1986) showed that under this design the correlation matrix is exactly preserved in expectation, making the masked data more analytically faithful for multivariate tasks.
 
@@ -247,10 +247,10 @@ Global recoding is frequently the first non-perturbative intervention because it
 > Replace values above a top threshold with the threshold value, and values below a bottom threshold with the threshold value, eliminating the most extreme observations that are most likely to be unique and thus re-identifiable.
 
 $$
-x' = \min(x,\; T_{\mathrm{top}}), \qquad x' = \max(x,\; T_{\mathrm{bot}})
+x' = \min(x,\; T_{top}), \qquad x' = \max(x,\; T_{bot})
 $$
 
-Top coding bounds the upper tail of a distribution: any record with $x > T_{\mathrm{top}}$ has its value replaced by exactly $T_{\mathrm{top}}$ (or labelled as "$T_{\mathrm{top}}+$"). Bottom coding does the analogous operation for the lower tail. The thresholds are typically set at extreme quantiles — often the 98th or 99th percentile for top coding, or the 1st or 2nd percentile for bottom coding — to affect only the outliers that represent the greatest re-identification risk.
+Top coding bounds the upper tail of a distribution: any record with $x > T_{top}$ has its value replaced by exactly $T_{top}$ (or labelled as "$T_{top}+$"). Bottom coding does the analogous operation for the lower tail. The thresholds are typically set at extreme quantiles — often the 98th or 99th percentile for top coding, or the 1st or 2nd percentile for bottom coding — to affect only the outliers that represent the greatest re-identification risk.
 
 The rationale is that extreme values are disproportionately identifying. A billionaire's income, a centenarian's age, or a very small firm's employee count may be unique in the dataset and directly linkable to public records. By collapsing all such extremes to a single coded value the released data no longer reveals exactly how extreme any individual record is.
 
