@@ -13,7 +13,7 @@ This repository is a **proposal document set** — not implementation code. It i
 | Data Engineer | 03, 05, 06, 07 |
 | ML Engineer | 03, 06, 07 |
 | Legal / Compliance | 02, 09 |
-| Engineering Lead | 01, 05, 10, 11 |
+| Engineering Lead | 01, 05, 10, 11, 12 |
 
 
 ## Document Index
@@ -31,11 +31,12 @@ This repository is a **proposal document set** — not implementation code. It i
 | 09 | [Compliance & Audit Framework](docs/09-compliance-audit.md) | PIPA compliance checklist, audit architecture, risk metrics |
 | 10 | [SDC Foundations and Guidance](docs/10-sdc-foundations-and-guidance.md) | Statistical disclosure control concepts, risk-utility framework |
 | 11 | [SDC Microdata Protection Methods](docs/11-sdc-microdata-protection-methods.md) | All 13 masking methods with formulas, explanations, and citations |
+| 12 | [SDC Risk and Utility Metrics](docs/12-sdc-risk-and-utility-metrics.md) | Quantitative reference for every disclosure-risk and information-loss metric used in the SDC risk-utility loop |
 
 
 ## How to Use This Repo
 
 1. Start with **01-executive-summary** for the full picture.
 2. Security / legal review: focus on **02**, **08**, and **09**.
-3. SDC method selection: start with **10**, then use **11** as a reference.
+3. SDC method selection: start with **10**, use **11** as the methods reference, and **12** as the metrics reference. Every method entry in 11 cross-links to its native metrics in 12.
 4. Each document is self-contained and cross-references others where relevant.

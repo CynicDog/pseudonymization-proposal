@@ -48,6 +48,8 @@ The original data matrix $X$ ($n \times p$) is transformed by adding a noise mat
 
 Noise addition is the simplest perturbative method to implement and is theoretically well understood. Its main limitation is that it does not provide formal disclosure bounds: a motivated intruder who knows the noise parameters can partially undo the perturbation, and records with very unusual values may still be identifiable despite the added noise.
 
+**Measurement:** Native risk metric is [record linkage (top-1 lower / top-2 upper)](12-sdc-risk-and-utility-metrics.md#record-linkage-risk-distance-based) supplemented by [interval disclosure risk](12-sdc-risk-and-utility-metrics.md#interval-disclosure-risk); native utility metric is the [λ measure](12-sdc-risk-and-utility-metrics.md#-measure), with [eigenvalue spectrum comparison](12-sdc-risk-and-utility-metrics.md#eigenvalue-spectrum-comparison) as a secondary check on covariance distortion. Noise addition alters values continuously, so disclosure is best assessed through nearest-neighbour recovery and utility through range-normalised mean absolute deviation.
+
 **References:** Kim (1986); Kim (1990); Sullivan (1989); Tendick (1991); Brand (2002).
 
 ### Multiplicative Noise
@@ -68,6 +70,8 @@ The raw multiplicative perturbation $X^a$ distorts the sample mean and variance.
 
 Multiplicative noise is especially appropriate when variables are strictly positive (wages, assets, turnover) and when analysts rely on means and variances but not higher moments. Its implementation is more demanding than additive noise because the rescaling must be performed correctly to avoid introducing bias, and because the distribution of $Z_{ij}$ must be chosen so that $Z_{ij} \cdot X_{ij}$ remains within a plausible range.
 
+**Measurement:** Native risk metric is [record linkage (top-1 / top-2)](12-sdc-risk-and-utility-metrics.md#record-linkage-risk-distance-based) supplemented by [RMDID1](12-sdc-risk-and-utility-metrics.md#rmdid1--robust-mahalanobis-disclosure-risk); native utility metric is the [λ measure](12-sdc-risk-and-utility-metrics.md#-measure), with [regression coefficient comparison (lm)](12-sdc-risk-and-utility-metrics.md#regression-coefficient-comparison-lm) as a check that the moment-preserving rescaling has not introduced bias in conditional means. Because perturbation scales with magnitude, outlier-aware risk (RMDID1) matters more than for additive noise.
+
 **References:** Höhne (2004).
 
 ### Microaggregation
@@ -85,6 +89,8 @@ The objective is to find the partition that minimises information loss (measured
 For the univariate case Hansen and Mukherjee (2003) proved that the optimal partition places equal-sized groups of exactly $k$ records on the sorted variable and derived a dynamic-programming algorithm. For the multivariate case the problem is NP-hard, so heuristics are used in practice. The **MDAV** (Maximum Distance to Average Vector) algorithm (Mateo-Sanz and Domingo-Ferrer 1999) works as follows: find the record farthest from the dataset centroid, form a group of $k$ nearest neighbours around it, remove the group, and repeat until all records are assigned. MDAV consistently achieves near-optimal SSE and runs in $O(n^2)$ per variable.
 
 Information loss grows with $k$ and with the heterogeneity within groups. For categorical variables microaggregation can be applied with adaptation by using the mode instead of the mean and a suitable distance measure over the categorical domain (Torra 2004).
+
+**Measurement:** Native utility measure is [SSE / SST](12-sdc-risk-and-utility-metrics.md#sse--sst-ratio) — the MDAV objective directly minimises within-group SSE — and the structural risk guarantee is [k-anonymity](12-sdc-risk-and-utility-metrics.md#k-anonymity) by construction. Residual disclosure should be checked via [top-1 record linkage](12-sdc-risk-and-utility-metrics.md#record-linkage-risk-distance-based), since k-anonymity does not bound similarity-based recovery from the centroids.
 
 **References:** Defays and Nanopoulos (1993); Mateo-Sanz and Domingo-Ferrer (1999); Domingo-Ferrer and Mateo-Sanz (2002); Hansen and Mukherjee (2003); Oganian and Domingo-Ferrer (2001); Torra (2004).
 
@@ -104,6 +110,8 @@ In data swapping (Dalenius and Reiss 1978), the dataset is partitioned into matc
 
 Data swapping is most natural for categorical variables because matching is easier to define, but it can be adapted to continuous variables by treating matched groups as quantile bands. Unlike noise addition, it produces no analytical bias on marginals, making it suitable for frequency-table production systems. Its main weakness is that the protection for any individual record is probabilistic — an intruder who learns that a record was not swapped can still identify the individual.
 
+**Measurement:** Native risk metric is [record linkage (top-1)](12-sdc-risk-and-utility-metrics.md#record-linkage-risk-distance-based) on the swapped sensitive attribute, complemented by [individual risk](12-sdc-risk-and-utility-metrics.md#individual-risk-benedetti-franconi) when the swap fraction is below 100%; native utility metrics are [KL divergence](12-sdc-risk-and-utility-metrics.md#kl-divergence-categorical) on the marginal of the swapped variable (which by construction should be near zero) and [λ](12-sdc-risk-and-utility-metrics.md#-measure) on the joint distribution. Because swaps preserve marginals exactly, joint-distribution distortion is the loss to track.
+
 **References:** Dalenius and Reiss (1978); Reiss, Post and Dalenius (1982); Reiss (1984).
 
 ### Rank Swapping
@@ -121,6 +129,8 @@ Rank swapping (Greenberg 1987) treats each variable independently. After sorting
 The parameter $p$ governs the protection-utility trade-off: larger $p$ allows values to travel farther, increasing protection but distorting distributional statistics more strongly. Moore (1996) showed that rank swapping outperforms simple random rounding on several utility measures while providing comparable protection.
 
 Applied to categorical ordinal variables, rank swapping is equivalent to permuting codes within an ordered neighbourhood. Domingo-Ferrer and Torra (2001) provided a comparative evaluation against other perturbative methods on real microdata sets, finding rank swapping among the most utility-preserving options for continuous key variables.
+
+**Measurement:** Native risk metric is [record linkage (top-1 / top-2)](12-sdc-risk-and-utility-metrics.md#record-linkage-risk-distance-based); native utility metric is the [λ measure](12-sdc-risk-and-utility-metrics.md#-measure), with [regression coefficient comparison (lm)](12-sdc-risk-and-utility-metrics.md#regression-coefficient-comparison-lm) used to detect the cross-column correlation attenuation that rank swapping causes when applied independently per variable.
 
 **References:** Greenberg (1987); Moore (1996); Domingo-Ferrer and Torra (2001).
 
@@ -140,6 +150,8 @@ Rounding reduces the precision of continuous variables to a granularity that mat
 
 Rounding is strictly applicable to continuous (or fine-grained integer) variables; for categorical variables the analogous operation is global recoding. It is often combined with top and bottom coding to further protect outliers that fall far from any rounded multiple.
 
+**Measurement:** Native risk metric is [interval disclosure risk](12-sdc-risk-and-utility-metrics.md#interval-disclosure-risk) — every masked value carries an exact deterministic interval $[ub, (u+1)b]$, which makes the disclosure interval analytically known; native utility metric is the [λ measure](12-sdc-risk-and-utility-metrics.md#-measure), since rounding's loss is bounded by $b/2$ per record and λ averages this directly.
+
 **References:** Willenborg and De Waal (2001).
 
 ### Resampling
@@ -157,6 +169,8 @@ Heer (1993) proposed resampling as a masking procedure that smooths the empirica
 The key insight is that for large $t$ the averaged order statistics converge to the expected order statistics of the underlying distribution, which are smooth and continuous even if the original data has ties or spikes. This makes resampling especially effective for income and expenditure variables with heavy right tails, where a few exact large values dominate disclosure risk.
 
 Correlation structure between variables is approximately preserved because each variable is sorted independently before averaging, maintaining the relative rank correspondence across variables. Domingo-Ferrer and Mateo-Sanz (1999) evaluated resampling against other perturbative methods, finding it provides a favourable utility-protection balance for continuous survey variables.
+
+**Measurement:** Native risk metric is [record linkage (top-1 / top-2)](12-sdc-risk-and-utility-metrics.md#record-linkage-risk-distance-based) plus [RMDID1](12-sdc-risk-and-utility-metrics.md#rmdid1--robust-mahalanobis-disclosure-risk) for tail records; native utility metric is the [λ measure](12-sdc-risk-and-utility-metrics.md#-measure) with [eigenvalue spectrum comparison](12-sdc-risk-and-utility-metrics.md#eigenvalue-spectrum-comparison) as a secondary check, since resampling smooths the distribution and may flatten covariance eigenvalues.
 
 **References:** Heer (1993); Domingo-Ferrer and Mateo-Sanz (1999).
 
@@ -182,6 +196,8 @@ In PRAM (Gouweleeuw et al. 1997), each record's categorical value $X = c_k$ is i
 
 PRAM is the categorical counterpart of noise addition. It is widely applicable to nominal and ordinal variables, particularly sensitive attributes such as health status, religion, or occupation in official microdata releases.
 
+**Measurement:** Native risk metric is [individual risk](12-sdc-risk-and-utility-metrics.md#individual-risk-benedetti-franconi) under the perturbed marginal, with [t-closeness](12-sdc-risk-and-utility-metrics.md#t-closeness) when the affected variable is sensitive; native utility metric is [KL divergence](12-sdc-risk-and-utility-metrics.md#kl-divergence-categorical) on the column marginal, which under invariant PRAM approaches zero by construction. The strength of PRAM's protection is precisely what makes KL the right loss measure: any deviation reflects sample-level variance around an unbiased target.
+
 **References:** Gouweleeuw et al. (1997); Kooiman et al. (1998); De Wolf et al. (1999).
 
 ### MASSC
@@ -204,6 +220,8 @@ MASSC (Singh, Yu and Dunteman 2003) was designed specifically for official micro
 
 MASSC produces a microdata file that is simultaneously $k$-anonymous (structural protection), distributionally faithful (calibrated), and smaller than the original (sampling protection). Its main limitation is the complexity of the four-step pipeline and the need to choose cluster size $k$, subsample fraction, and calibration variables jointly to avoid large design effects.
 
+**Measurement:** Native risk guarantee is [k-anonymity](12-sdc-risk-and-utility-metrics.md#k-anonymity) by construction (Step 1 — Micro Agglomeration), with residual [SUDA score](12-sdc-risk-and-utility-metrics.md#suda-score-msu) as the check on minimal sample uniques that survive subsampling; native utility metrics are [KL divergence](12-sdc-risk-and-utility-metrics.md#kl-divergence-categorical) on calibrated marginals (which Step 4 forces near zero) and [λ](12-sdc-risk-and-utility-metrics.md#-measure) on the substituted key-variable values.
+
 **References:** Singh, Yu and Dunteman (2003).
 
 ## Non-perturbative Methods
@@ -221,6 +239,8 @@ In simple random sampling without replacement, $\pi_i = n/N$ for all units $i$ i
 Sampling provides disclosure limitation through **uncertainty of inclusion**: an intruder who finds a record matching a known individual cannot confirm the match because the individual may simply not have been sampled. The protection is probabilistic and strongest when the sampling fraction $n/N$ is small. If the sampling fraction approaches 1 (a near-census), sampling alone provides negligible protection.
 
 Released microdata files from household surveys are almost always samples rather than censuses, making sampling a default first layer of protection. Sampling does not distort the values of variables that are included — this distinguishes it sharply from perturbative methods and makes it attractive for research microdata where analytical accuracy on retained records is paramount. However, rare subpopulations are likely to be underrepresented or absent in the sample, which can itself be a disclosure risk: absence confirms non-membership in the subgroup.
+
+**Measurement:** Native risk metric is [individual risk](12-sdc-risk-and-utility-metrics.md#individual-risk-benedetti-franconi), since sampling's protection is exactly the inclusion uncertainty that the Benedetti-Franconi $f_k / \hat{F}_k$ posterior models; there is no native value-distortion utility metric because sampled values are intact. Utility loss enters only through design effects, which are captured indirectly by [regression coefficient comparison (lm)](12-sdc-risk-and-utility-metrics.md#regression-coefficient-comparison-lm) against the full population (when available) or against larger samples.
 
 **References:** Hundepool et al. (2014); standard survey sampling literature.
 
@@ -240,6 +260,8 @@ The protection mechanism is straightforward: the released variable carries less 
 
 Global recoding is frequently the first non-perturbative intervention because it is transparent, reversible in the sense that the mapping $g$ can be published, and does not require any record-level decisions. Its main drawback is that it applies the same coarsening to all records equally, including those records that pose little disclosure risk. This motivates hybrid approaches combining global recoding with local suppression to handle residual uniqueness after recoding.
 
+**Measurement:** Native risk metric is [k-anonymity](12-sdc-risk-and-utility-metrics.md#k-anonymity) — recoding's purpose is precisely to reduce sample uniques on the quasi-identifier combination — with [SUDA score](12-sdc-risk-and-utility-metrics.md#suda-score-msu) as a residual diagnostic; native utility metrics are the [λ measure](12-sdc-risk-and-utility-metrics.md#-measure) (interval midpoint distance from the original) and [KL divergence](12-sdc-risk-and-utility-metrics.md#kl-divergence-categorical) on the recoded marginal distribution.
+
 **References:** De Waal and Willenborg (1995, 1999); Hundepool et al. (2014).
 
 ### Top and Bottom Coding
@@ -255,6 +277,8 @@ Top coding bounds the upper tail of a distribution: any record with $x > T_{top}
 The rationale is that extreme values are disproportionately identifying. A billionaire's income, a centenarian's age, or a very small firm's employee count may be unique in the dataset and directly linkable to public records. By collapsing all such extremes to a single coded value the released data no longer reveals exactly how extreme any individual record is.
 
 Top and bottom coding preserves the entire interior of the distribution without alteration, so all records not near the extremes receive no perturbation. This makes the method analytically neutral for the bulk of the data while providing targeted protection for the outliers. Analysts working with the tails — for example, studying high-income earners — must account for the censoring explicitly (e.g., using Tobit models or interval regression). For categorical variables, top and bottom coding generalises to collapsing the highest and lowest ordered categories into aggregated codes.
+
+**Measurement:** Native risk metric is [RMDID1](12-sdc-risk-and-utility-metrics.md#rmdid1--robust-mahalanobis-disclosure-risk), since top/bottom coding directly targets robust-Mahalanobis outliers, with [individual risk](12-sdc-risk-and-utility-metrics.md#individual-risk-benedetti-franconi) as the check on whether the threshold is aggressive enough; native utility metric is the [λ measure](12-sdc-risk-and-utility-metrics.md#-measure), where the loss is concentrated on the censored tail records but contributes proportionally to the column average.
 
 **References:** Hundepool et al. (2014); Willenborg and De Waal (2001).
 
@@ -275,5 +299,7 @@ A record is **unique** if no other record in the dataset shares the same combina
 Unlike global recoding, local suppression makes record-level decisions: only the records that cause uniqueness are modified, and only the minimum necessary values are suppressed. This is efficient when most records are already safe and only a small fraction require treatment. The minimisation problem (find the fewest suppressions that achieve $k$-anonymity) is NP-hard in general but is tractable in practice via greedy heuristics or integer programming solvers, as implemented in tools such as $\mu$-Argus.
 
 Local suppression is typically applied after global recoding: recoding reduces the number of unique records substantially, and suppression handles the residual cases. Released data with suppressed values must be analysed with methods that handle missing data (multiple imputation, maximum likelihood with missing-data mechanisms), and the missingness pattern is non-random — it is concentrated in the most unusual records — which must be disclosed to analysts.
+
+**Measurement:** Native risk guarantee is [k-anonymity](12-sdc-risk-and-utility-metrics.md#k-anonymity) by construction (the suppression objective enforces it), with [benchmark risk outlier](12-sdc-risk-and-utility-metrics.md#benchmark-risk-outlier) as the diagnostic for records that demanded suppression; native utility metrics are the [λ measure](12-sdc-risk-and-utility-metrics.md#-measure) — by handbook convention each `*` cell counts as full range-fraction loss — and [KL divergence](12-sdc-risk-and-utility-metrics.md#kl-divergence-categorical) on the affected variable's marginal.
 
 **References:** De Waal and Willenborg (1995); Hundepool et al. (2014).
