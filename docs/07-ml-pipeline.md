@@ -21,7 +21,7 @@ The same source value must always produce the same pseudonym, across pipeline ru
 Achieved by: FF1 with a fixed key, HMAC-SHA-256 with a fixed key. Both are deterministic for the same input and key.
 
 **2. Referential Integrity**
-If `customer_id = 10042` appears in three tables (policy, claim, payment), it must pseudonymize to the same token `PX-9k3m2` in all three tables. This allows Databricks feature engineering to JOIN across these tables using the pseudonymized key just as it would with the raw key.
+If `customer_id = 10042` appears in three tables (policy, claim, payment), it must pseudonymize to the same token `PX-9k3m2` in all three tables. This allows the feature engineering job to JOIN across these tables using the pseudonymized key just as it would with the raw key.
 
 Achieved by: using the same key and the same technique for the same logical entity identifier across all tables. The implementation must enforce this via a column-classification configuration that is shared across all pipeline runs.
 
@@ -36,24 +36,24 @@ Pseudonymization must not distort the statistical relationships between features
 ## Pseudonymized Feature Store Design
 
 ```
-Pseudonymized Zone (ADLS)
+Pseudonymized Storage
     │
     ▼
-Databricks Feature Engineering Job
+Feature Engineering Job
     │
     ├── JOIN: pseudo_policy ON pseudo_customer_id = pseudo_id
     ├── JOIN: pseudo_claim ON pseudo_policy_id = pseudo_id
     └── JOIN: pseudo_payment ON pseudo_policy_id = pseudo_id
     │
     ▼
-Feature Table (Databricks Feature Store or ADLS Parquet)
+Feature Table (Feature Store or Parquet files)
     │
     • Entity key: pseudo_customer_id (FF1-pseudonymized, deterministic)
     • Features: claim_count_6m, premium_amount, last_payment_date, ...
     • No raw PII in any feature column
     │
     ▼
-ML Training (Databricks MLflow experiment)
+ML Training (experiment tracker)
     │
     ▼
 Registered Model (MLflow Model Registry)
@@ -150,5 +150,5 @@ Some downstream use cases require attaching model predictions to identifiable cu
 | Using non-deterministic masking (Faker) for training data | Breaks cross-table JOINs; unusable feature store | Use FF1/HMAC with fixed key |
 | Storing keys in model configuration files | Key exposure if repo/config leaked | Key Vault at runtime |
 | Pseudonymizing only some tables in a JOIN | Inconsistent JOIN keys; feature engineering failure | Pseudonymize all tables with shared classification config |
-| Training on raw data in a "trusted" Databricks notebook | PIPA violation; breach risk | All Databricks compute accesses pseudonymized zone only |
-| Embedding raw IDs in model feature names or metadata | PII leakage in MLflow artifacts | Use pseudonymized IDs as feature names |
+| Training on raw data in a "trusted" analytics compute environment | PIPA violation; breach risk | All ML compute accesses pseudonymized zone only |
+| Embedding raw IDs in model feature names or metadata | PII leakage in model artifacts | Use pseudonymized IDs as feature names |

@@ -88,11 +88,11 @@ Unlike EU GDPR's prescriptive Recital 26 guidance, **PIPA does not mandate speci
 | Minimum-use principle | Only pseudonymize fields actually needed downstream |
 | Organizational accountability | Assign DPO-equivalent role; document chain of responsibility |
 | Audit trail | Immutable logs: who triggered pseudonymization, when, on which dataset |
-| Re-identification prevention | Raw zone break-glass access only; keys isolated in Key Vault |
+| Re-identification prevention | Raw zone break-glass access only; keys isolated in key management service |
 
 
 ## GDPR Alignment Note
 
-While this company operates primarily under Korean law, international data exchanges (e.g., reinsurance data, cross-border cloud processing) may trigger GDPR applicability for data subjects in EU/EEA member states. GDPR Recital 26 and Article 4(5) define pseudonymization in terms compatible with PIPA's 가명처리 concept. The technical controls proposed in this document — FF1 with separate key management, HMAC-SHA-256, Azure Key Vault isolation — satisfy GDPR Article 32's requirement for "appropriate technical measures" and are consistent with EDPB guidance on pseudonymization.
+While this company operates primarily under Korean law, international data exchanges (e.g., reinsurance data, cross-border cloud processing) may trigger GDPR applicability for data subjects in EU/EEA member states. GDPR Recital 26 and Article 4(5) define pseudonymization in terms compatible with PIPA's 가명처리 concept. The technical controls proposed in this document — FF1 with separate key management, HMAC-SHA-256, isolated key store — satisfy GDPR Article 32's requirement for "appropriate technical measures" and are consistent with EDPB guidance on pseudonymization.
 
 No additional GDPR-specific architecture changes are required if the key management controls in [08-key-management.md](08-key-management.md) are implemented as specified.

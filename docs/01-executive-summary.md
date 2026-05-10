@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-The company's data platform ingests sensitive and personal data from on-premises databases into Azure cloud infrastructure (Azure Data Factory, Azure Data Lake Storage, Databricks). This data flows downstream into machine learning workloads for prediction and inference.
+The data platform ingests sensitive and personal data from on-premises databases into cloud infrastructure. This data flows downstream into machine learning workloads for prediction and inference.
 
 Raw, identifiable data must never reach the ML layer. Regulatory obligations under Korean PIPA (개인정보보호법) require that any secondary use of personal information — including for statistical analysis and machine learning — must operate on pseudonymized data. Beyond compliance, pseudonymization reduces breach impact: a compromised pseudonymized dataset is computationally infeasible to re-identify without the corresponding cryptographic key.
 
@@ -16,7 +16,7 @@ This proposal covers the design of a **pseudonymization layer** sitting between 
 
 ## Current State
 
-The team previously used PySpark modules on Synapse/Databricks for data transformations. For the actual data volumes in production — primarily megabytes, occasionally gigabytes — Spark introduces unnecessary overhead: cluster spin-up latency, complex dependency management, and disproportionate infrastructure cost. This proposal establishes a right-sized approach.
+For the actual data volumes in scope — primarily megabytes, occasionally gigabytes — distributed processing tooling introduces unnecessary overhead: cluster spin-up latency, complex dependency management, and disproportionate infrastructure cost. This proposal establishes a right-sized approach.
 
 ## Recommended Approach
 
@@ -28,41 +28,31 @@ Statistical Disclosure Control — rounding to appropriate precision, top-coding
 **For direct identifiers** (customer ID, resident registration number, policy number, phone number):
 Consistent surrogation — a deterministic transformation that replaces each identifier with a stable, opaque surrogate, enabling cross-table joins without revealing the original identity. These fields are not ML features; the surrogation technique's primary requirement is consistency, not cryptographic strength.
 
-**Engine:** Polars 1.x + PyArrow — columnar, in-memory, deployed on-prem. Handles MB–GB workloads on a single node. Replaces PySpark for the pseudonymization step; Databricks remains as the ML training platform.
+**Engine:** Polars 1.x + PyArrow — columnar, in-memory, deployed on-prem. Handles MB–GB workloads on a single node without cloud compute overhead.
 
-**Detection:** Microsoft Presidio `StructuredEngine` with regex-based pattern recognizers for structured tabular fields. No NER or language model inference required for 100% tabular data.
+**Detection:** A structured PII detection library with regex-based pattern recognizers for structured tabular fields. No NER or language model inference required for 100% tabular data.
 
 ## Architecture Summary
 
-The pseudonymization service runs on-premises. Its exact placement in the pipeline — whether before data enters the cloud (pre-ingestion) or after the Databricks medallion enrichment (post-medallion egress) — is an open architectural decision pending governance policy alignment. Both options share the same module design and key management approach.
+The pseudonymization service runs on-premises. Its exact placement in the pipeline — whether before data enters the cloud (pre-ingestion) or after cloud-side enrichment (post-enrichment egress) — is an open architectural decision pending governance policy alignment. Both options share the same module design and key management approach.
 
 ```
 Option A — Pre-Ingestion
 
-  On-Prem DB → [On-Prem Pseudo Service] → ADF SHIR → ADLS (pseudonymized) → Databricks → ML
+  On-Prem DB → [On-Prem Pseudo Service] → encrypted transfer → cloud storage (pseudonymized) → ML
 
-Option B — Post-Medallion Egress
+Option B — Post-Enrichment Egress
 
-  On-Prem DB → ADF SHIR → ADLS (raw) → Databricks Medallion
-                                              │ egress gold layer
-                                              ▼
-                                    [On-Prem Pseudo Service]
-                                              │ re-ingest
-                                              ▼
-                                    ADLS (pseudonymized) → ML
+  On-Prem DB → encrypted transfer → cloud storage (raw) → cloud analytics platform (enrichment)
+                                                                    │ egress enriched layer
+                                                                    ▼
+                                                         [On-Prem Pseudo Service]
+                                                                    │ re-ingest
+                                                                    ▼
+                                                         cloud storage (pseudonymized) → ML
 ```
 
 Full architecture detail with tradeoff analysis: [05-architecture.md](05-architecture.md)
-
-## Roadmap at a Glance
-
-| Phase | Duration | Focus |
-|---|---|---|
-| Phase 1 — Foundation | Weeks 1–4 | Classification inventory, Key Vault setup, Presidio Korean recognizers, base Polars module |
-| Phase 2 — Integration | Weeks 5–8 | ADF pipeline wiring, audit logging, referential integrity testing, ML pipeline validation |
-| Phase 3 — Hardening | Weeks 9–12 | PIPA risk assessment docs, key rotation automation, re-identification penetration test, stakeholder sign-off |
-
-Full roadmap: [09-implementation-roadmap.md](09-implementation-roadmap.md)
 
 ## Key Decisions
 
@@ -72,8 +62,8 @@ Full roadmap: [09-implementation-roadmap.md](09-implementation-roadmap.md)
 | Approach for direct identifiers | Deterministic surrogation (HMAC or FF1) | Consistent join-key replacement; these fields are not ML features |
 | Transform engine | Polars 1.x + PyArrow | Right-sized for MB-GB; on-prem deployable; no Spark overhead |
 | Deployment target | On-premises | Pseudonymization logic stays within on-prem security boundary |
-| Pipeline placement | TBD (pre-ingestion or post-medallion) | Open to either — see [05-architecture.md](05-architecture.md) |
-| Column detection | Microsoft Presidio StructuredEngine (regex-based) | No NER model needed for 100% tabular data |
-| Key store (for identifier surrogation) | HashiCorp Vault (on-prem) or Azure Key Vault via private link | Keys stay within on-prem boundary |
+| Pipeline placement | TBD (pre-ingestion or post-enrichment) | Open to either — see [05-architecture.md](05-architecture.md) |
+| Column detection | Regex-based structured PII detection library | No NER model needed for 100% tabular data |
+| Key store (for identifier surrogation) | On-prem KMS or cloud KMS via private network | Keys stay within on-prem boundary |
 | Do NOT use | FF3/FF3-1 | NIST-withdrawn Feb 2025; cryptographic weakness in tweak schedule |
 | Do NOT apply to analytical fields | Encryption (FF1, HMAC, AES) | Encrypted numerical fields are meaningless for ML |

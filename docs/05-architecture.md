@@ -3,7 +3,7 @@
 ## Design Principles
 
 1. **Pseudonymize once, use everywhere.** Pseudonymization happens at a single designated boundary. All downstream systems consume only pseudonymized data.
-2. **Keys never travel with data.** Encryption keys live in an isolated key store (on-prem KMS or Azure Key Vault via private link), accessed at runtime. No key material appears in pipeline configuration, environment variables, or data files.
+2. **Keys never travel with data.** Encryption keys live in an isolated key store (on-prem KMS or cloud KMS via private network), accessed at runtime. No key material appears in pipeline configuration, environment variables, or data files.
 3. **Pseudonymization runs on-prem.** The pseudonymization service is deployed on-premises, not on cloud compute. This keeps key material and the pseudonymization logic within the on-prem security boundary regardless of where the data boundary is drawn.
 4. **Placement is a policy decision, not a technical one.** The pseudonymization module is designed identically regardless of where in the pipeline it is placed. Two integration points are viable; the choice depends on data governance policy and pipeline design.
 5. **Determinism by default.** All production pseudonymization is deterministic (same input + same key → same output) to preserve referential integrity for downstream JOIN operations.
@@ -17,7 +17,7 @@ The pseudonymization layer is a standalone Python service (Polars + ff3 + HMAC �
 - A Linux/Windows batch process triggered by a scheduler or file-arrival event
 - A lightweight HTTP service (FastAPI) called by adjacent pipeline components
 
-The service reads from a local or network-accessible data source, applies per-column pseudonymization per the classification manifest, writes the pseudonymized output, and emits an audit log event. It does not depend on Databricks, Azure Functions, or any cloud compute runtime. Cloud resources it may interact with are limited to storage (ADLS read/write) and key retrieval (Azure Key Vault via private link, or on-prem HashiCorp Vault).
+The service reads from a local or network-accessible data source, applies per-column pseudonymization per the classification manifest, writes the pseudonymized output, and emits an audit log event. It does not depend on any cloud compute runtime. Cloud resources it may interact with are limited to storage (read/write) and key retrieval (on-prem KMS or cloud KMS via private network).
 
 ## Integration Point Options
 
@@ -25,7 +25,7 @@ The placement of this service within the pipeline is not yet decided. Two viable
 
 ### Option A — Pre-Ingestion (Pseudonymize Before Cloud)
 
-Data is pseudonymized on-prem before ADF ever touches it. The cloud receives only pseudonymized data from the start.
+Data is pseudonymized on-prem before any cloud transfer. The cloud receives only pseudonymized data from the start.
 
 ```
 On-Prem Network
@@ -37,26 +37,25 @@ On-Prem Network
 │  On-Prem Pseudonymization Service                            │
 │  ├── Reads raw data from source DB (or staging file area)    │
 │  ├── Applies FF1 / HMAC per classification manifest          │
-│  ├── Fetches keys from on-prem KMS (HashiCorp Vault or AKV   │
-│  │   via private link)                                       │
+│  ├── Fetches keys from on-prem KMS or cloud KMS via          │
+│  │   private network                                         │
 │  └── Writes pseudonymized Parquet to staging storage         │
 │      │                                                       │
 │      ▼                                                       │
 │  Pseudonymized Staging Storage                               │
-│  (local filesystem / NAS / ADLS — TBD)                      │
+│  (local filesystem / NAS / cloud storage — TBD)             │
 │      │                                                       │
 └──────┼───────────────────────────────────────────────────────┘
-       │  ADF SHIR (TLS 1.2+) — if cloud storage is the target
-       │  or: Databricks reads directly from on-prem storage
+       │  Encrypted transfer — if cloud storage is the target
        │  Ingests pseudonymized data — no raw PII ever enters cloud
        ▼
-Azure Cloud
+Cloud Environment
 ┌──────────────────────────────────────────────────────────────┐
 │                                                              │
 │  Cloud Storage — Ingested Zone (pseudonymized Parquet)       │
 │      │                                                       │
 │      ▼                                                       │
-│  Databricks (medallion: bronze → silver → gold)              │
+│  Cloud analytics platform                                    │
 │  Feature engineering, ML training                            │
 │      │                                                       │
 │      ▼                                                       │
@@ -72,9 +71,9 @@ Azure Cloud
 - Pseudonymization applied to source data as-is, before any enrichment or cross-table joins in the medallion
 - If cross-table consistency is needed (e.g., `customer_id` pseudonymized identically across multiple source tables), the service must be given a unified view or run with a shared key and classification manifest across all source tables
 
-### Option B — Post-Medallion Egress (Pseudonymize After Cloud Enrichment)
+### Option B — Post-Enrichment Egress (Pseudonymize After Cloud Enrichment)
 
-Raw data is ingested into the cloud, processed through the Databricks medallion (bronze → silver → gold), and the enriched output is egressed back to on-prem for pseudonymization. The pseudonymized Parquet is then written to the final storage destination (on-prem or cloud).
+Raw data is ingested into the cloud, processed through an enrichment pipeline (raw → cleansed → curated layers), and the enriched output is egressed back to on-prem for pseudonymization. The pseudonymized Parquet is then written to the final storage destination (on-prem or cloud).
 
 ```
 On-Prem Network
@@ -83,22 +82,21 @@ On-Prem Network
 │  Source DB(s)                                                │
 │      │                                                       │
 └──────┼───────────────────────────────────────────────────────┘
-       │  ADF SHIR — raw data ingestion (TLS 1.2+)
+       │  Encrypted transfer — raw data ingestion
        ▼
-Azure Cloud
+Cloud Environment
 ┌──────────────────────────────────────────────────────────────┐
 │                                                              │
 │  Cloud Storage — Raw Zone (Parquet)                          │
 │  (raw PII present; strict access controls required)          │
 │      │                                                       │
 │      ▼                                                       │
-│  Databricks Medallion Pipeline                               │
-│  Bronze: raw ingest                                          │
-│  Silver: cleanse, join, conform                              │
-│  Gold: curated domain entities (customer 360, unified claim) │
+│  Cloud analytics platform                                    │
+│  Raw: ingest                                                 │
+│  Cleanse: join, conform                                      │
+│  Curated: domain entities (customer 360, unified claim)      │
 │      │                                                       │
-│      │  Egress: gold-layer Parquet exported to on-prem       │
-│      │  (ADF SHIR transfer or direct storage mount)          │
+│      │  Egress: curated-layer Parquet exported to on-prem    │
 └──────┼───────────────────────────────────────────────────────┘
        │
        ▼
@@ -106,18 +104,18 @@ On-Prem Network
 ┌──────────────────────────────────────────────────────────────┐
 │                                                              │
 │  On-Prem Pseudonymization Service                            │
-│  ├── Reads gold-layer Parquet (enriched, joined entities)    │
+│  ├── Reads curated-layer Parquet (enriched, joined entities) │
 │  ├── Applies FF1 / HMAC per classification manifest          │
 │  └── Writes pseudonymized Parquet to target storage          │
 │      │                                                       │
 │      ▼                                                       │
 │  Pseudonymized Storage                                       │
-│  (local filesystem / NAS / ADLS — TBD)                      │
+│  (local filesystem / NAS / cloud storage — TBD)             │
 │      │                                                       │
 └──────┼───────────────────────────────────────────────────────┘
        │  Re-ingested to cloud if needed for ML / inference
        ▼
-Azure Cloud (if cloud consumption)
+Cloud Environment (if cloud consumption)
 ┌──────────────────────────────────────────────────────────────┐
 │                                                              │
 │  ML Feature Store / Inference Endpoint / Analytics           │
@@ -126,22 +124,22 @@ Azure Cloud (if cloud consumption)
 ```
 
 **Characteristics:**
-- Pseudonymization is applied to enriched, cross-table-joined entities — the gold layer represents a cleaner, more complete view of each entity before pseudonymization
-- Cross-table referential integrity is naturally handled by the medallion joins; all entity references in the gold output are pseudonymized in a single pass
-- Raw PII exists in the cloud (Raw Zone and Bronze/Silver layers) — these layers require their own access controls, break-glass procedures, and PIPA-compliant safeguards
+- Pseudonymization is applied to enriched, cross-table-joined entities — the curated layer represents a cleaner, more complete view of each entity before pseudonymization
+- Cross-table referential integrity is naturally handled by the enrichment joins; all entity references in the curated output are pseudonymized in a single pass
+- Raw PII exists in the cloud (raw and intermediate zones) — these zones require their own access controls, break-glass procedures, and PIPA-compliant safeguards
 - Additional data round-trip (cloud → on-prem → cloud if re-ingested) adds pipeline latency and egress cost
 - The PIPA compliance burden is higher: raw-data cloud storage must be documented and justified in the risk assessment
 
 ## Option Comparison
 
-| Concern | Option A (Pre-Ingestion) | Option B (Post-Medallion) |
+| Concern | Option A (Pre-Ingestion) | Option B (Post-Enrichment) |
 |---|---|---|
-| Raw PII in cloud | Never | Yes (Raw/Bronze/Silver zones) |
+| Raw PII in cloud | Never | Yes (raw and intermediate zones) |
 | PIPA compliance complexity | Lower | Higher (raw-zone controls required) |
-| Data quality at pseudonymization | Source-level (pre-enrichment) | Gold-level (post-enrichment, joined) |
-| Cross-table referential integrity | Requires coordinated manifest across source tables | Handled naturally by medallion joins |
+| Data quality at pseudonymization | Source-level (pre-enrichment) | Curated-level (post-enrichment, joined) |
+| Cross-table referential integrity | Requires coordinated manifest across source tables | Handled naturally by enrichment joins |
 | Pipeline round-trips | One (on-prem → cloud) | Three (on-prem → cloud → on-prem → cloud) |
-| Pseudonymization service complexity | Simpler (reads source tables directly) | Slightly higher (reads gold-layer export) |
+| Pseudonymization service complexity | Simpler (reads source tables directly) | Slightly higher (reads curated-layer export) |
 | Cloud architecture | Simpler (no raw zone controls needed) | More complex (raw zone isolation required) |
 
 ## Supporting Services
@@ -149,11 +147,12 @@ Azure Cloud (if cloud consumption)
 The following services are shared across both options.
 
 ```
-On-Prem Key Management
+Key Management Service (On-Prem or Cloud via Private Network)
 ┌─────────────────────────────────────────────────────────┐
-│  HashiCorp Vault (on-prem) — preferred for on-prem keys │
+│  On-prem KMS — preferred for keeping all key material   │
+│  within the on-prem network boundary                    │
 │  or                                                     │
-│  Azure Key Vault (accessed via ExpressRoute/private link)│
+│  Cloud KMS accessed via private network endpoint only   │
 │                                                         │
 │  • FF1 keys (general tier, sensitive tier)              │
 │  • HMAC signing key                                     │
@@ -162,13 +161,14 @@ On-Prem Key Management
 │  • All access audited                                   │
 └─────────────────────────────────────────────────────────┘
 
-Azure Governance (Cloud Side)
+Cloud Governance
 ┌─────────────────────────────────────────────────────────┐
-│  Microsoft Purview                                      │
+│  Data catalog / lineage tool                            │
 │  • Sensitivity labels on cloud storage assets           │
-│  • Data lineage tracking                                │
+│  • Data lineage tracking (source → raw → pseudonymized  │
+│    → ML) as PIPA compliance evidence                    │
 │                                                         │
-│  Azure Monitor + Log Analytics                          │
+│  Audit log aggregation (cloud-side)                     │
 │  • Pipeline execution logs                              │
 │  • Cloud storage access logs (raw zone if Option B)     │
 │  • Pseudonymization audit events (forwarded from on-prem)│
@@ -186,7 +186,7 @@ Input: raw Parquet file (from local filesystem, NAS, or cloud storage — path c
 Column scan (Presidio Analyzer + classification manifest lookup)
     │ → Identify PII/SPII columns and their tiers
     ▼
-Key retrieval (on-prem KMS or Azure Key Vault via private link)
+Key retrieval (on-prem KMS or cloud KMS via private network)
     │ → One key fetch per tier per job run; held in memory only
     ▼
 Technique dispatch per column

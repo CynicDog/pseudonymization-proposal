@@ -13,17 +13,13 @@
 | PII detection | Microsoft Presidio 2.x (`StructuredEngine`) | 7,400 | Regex-based column classification for tabular data; no NER required |
 | Korean patterns | Custom `PatternRecognizer` instances | — | RRN, 사업자등록번호, Korean phone, address — registered in Presidio |
 | Privacy validation | `anonymeter` 1.x | ~100 (CNIL-recognized) | Post-pseudonymization singling-out / linkability / inference risk |
-| Key management | HashiCorp Vault (on-prem) or Azure Key Vault via private link | — | On-prem key retrieval; no key material leaves on-prem boundary |
-| Storage I/O | Polars/PyArrow native (local) or `adlfs` (ADLS) | — | Local filesystem or cloud storage — TBD |
-| Data catalog | Microsoft Purview | Azure-managed | Sensitivity labels, lineage |
-| Orchestration | Azure Data Factory | Azure-managed | Pipeline scheduling, SHIR, activity chaining |
-| Audit logging | Azure Monitor + Log Analytics | Azure-managed | Pipeline execution + key access event logging |
-| ML runtime | Databricks Runtime 14.x LTS | — | Feature engineering and ML training on pseudonymized data |
+| Key management | On-prem KMS or cloud KMS via private network | — | On-prem key retrieval; no key material leaves on-prem boundary |
+| Storage I/O | Polars/PyArrow native (local/NAS) or cloud object storage driver | — | Local filesystem or cloud storage — TBD |
 
 
 ## Why Polars Instead of PySpark
 
-The current stack uses PySpark on Synapse/Databricks. For the actual data volumes in production, PySpark introduces costs that outweigh its benefits:
+For the target MB–GB data volumes, PySpark introduces costs that outweigh its benefits:
 
 | Factor | PySpark | Polars |
 |---|---|---|
@@ -31,11 +27,11 @@ The current stack uses PySpark on Synapse/Databricks. For the actual data volume
 | MB-scale throughput | Bottlenecked by driver overhead | ~45x faster than Pandas; handles MB in milliseconds |
 | GB-scale throughput | Competitive; best for true distributed data | Single-node streaming; handles up to ~100GB on 32GB RAM node |
 | Dependency management | JVM + Python + cluster config | Pure Python package; no JVM |
-| Cost | Full cluster (driver + workers) per run | Single Functions instance or single Databricks node |
+| Cost | Full cluster (driver + workers) per run | Single compute node |
 | Arrow/Parquet native | Via conversion layer | Native Arrow backend; zero-copy Parquet I/O |
 | Spark-specific patterns needed | Yes (RDDs, Catalyst optimizer) | No; standard Python data engineering |
 
-**Decision:** Use Polars for the pseudonymization step, deployed on-prem as a standalone Python service or containerized process. This eliminates the need for cloud compute (Databricks, Azure Functions) in the pseudonymization path, keeping the service lightweight and independently deployable within the on-prem security boundary. Databricks remains as the ML training and feature engineering platform. If data volume growth reaches consistent multi-GB or TB scale, the FF1/HMAC pseudonymization logic is portable to PySpark UDFs without changing the technique, key management design, or classification manifest schema.
+**Decision:** Use Polars for the pseudonymization step, deployed on-prem as a standalone Python service or containerized process. This eliminates the need for cloud compute in the pseudonymization path, keeping the service lightweight and independently deployable within the on-prem security boundary. If data volume growth reaches consistent multi-GB or TB scale, the FF1/HMAC pseudonymization logic is portable to PySpark UDFs without changing the technique, key management design, or classification manifest schema.
 
 Note on dropped libraries: `ff3` (~4 GitHub stars) and `py4phi` (single-person project, unknown adoption) were removed from the stack. All cryptographic operations are built on `cryptography` (PyCA, 7,600 stars, weekly releases) with FF1 implemented in-house against the NIST spec. See [04-industry-solutions.md](04-industry-solutions.md) for rationale.
 
@@ -46,13 +42,13 @@ The following describes the architecture of the pseudonymization module (not imp
 
 ### Storage Layer
 
-The output format is **Parquet** (confirmed). Whether the source and destination are a local or network filesystem (on-prem NAS, local disk) or Azure Data Lake Storage is not yet decided. This choice does not affect the pseudonymization logic or the Parquet output format — only the I/O path configuration changes.
+The output format is **Parquet** (confirmed). Whether the source and destination are a local or network filesystem (on-prem NAS, local disk) or a cloud object store is not yet decided. This choice does not affect the pseudonymization logic or the Parquet output format — only the I/O path configuration changes.
 
 Polars and PyArrow support both transparently:
 - Local/NAS path: `pl.scan_parquet("/mnt/data/source.parquet")` — no additional dependency
-- ADLS: `pl.scan_parquet("abfs://container/path.parquet", storage_options={...})` — requires `adlfs`
+- Cloud object store: requires an `fsspec`-compatible driver for the target cloud provider (e.g., `adlfs` for Azure Data Lake, `gcsfs` for GCS, `s3fs` for S3)
 
-`adlfs` should be included in the dependency list only if ADLS is chosen as the storage layer.
+The appropriate cloud storage driver should be added to the dependency list only if cloud storage is chosen.
 
 ### Lazy Evaluation for Memory Efficiency
 
@@ -127,7 +123,7 @@ Standard Presidio ships with recognizers for English and global PII (email, phon
 PyArrow is used as the I/O layer (Parquet read/write) and the in-memory data interchange format between Polars and Presidio.
 
 - Polars DataFrames expose `.to_arrow()` → `pyarrow.Table` for interop with PyArrow-native tools
-- `adlfs` provides an `fsspec`-compatible filesystem driver for ADLS Gen2; Polars and PyArrow both support `fsspec` for transparent cloud storage I/O
+- Cloud storage drivers (e.g., `adlfs`, `gcsfs`, `s3fs`) provide `fsspec`-compatible filesystem interfaces; Polars and PyArrow both support `fsspec` for transparent cloud storage I/O
 - Delta Lake format (via `deltalake` Python library) can be adopted in the Pseudonymized Zone if ACID transactions or time travel are needed; Delta tables are Arrow/Parquet native
 
 
@@ -135,28 +131,27 @@ PyArrow is used as the I/O layer (Parquet read/write) and the in-memory data int
 
 The pseudonymization service runs on-prem and retrieves keys from one of two sources:
 
-**Option 1 — HashiCorp Vault (on-prem, preferred)**
+**Option 1 — On-Prem KMS (preferred)**
 
-HashiCorp Vault deployed on-prem keeps all key material entirely within the on-prem network. The pseudonymization service authenticates via AppRole or a service token:
-
-```
-hvac.Client(url="https://vault.internal:8200", token=service_token)
-    → client.secrets.kv.v2.read_secret_version(path="pseudo/ff1-general")
-    → secret["data"]["data"]["key"]  # AES-256 key material
-```
-
-**Option 2 — Azure Key Vault over Private Link**
-
-If Azure Key Vault is preferred for unified key lifecycle management (rotation policy, audit logs feeding into Azure Monitor), it is accessible from on-prem via ExpressRoute or VPN with a private endpoint. The service authenticates via a service principal credential:
+An on-prem KMS keeps all key material entirely within the on-prem network. The pseudonymization service authenticates via a service credential (e.g., AppRole or service token). The retrieval pattern:
 
 ```
-azure-identity ClientSecretCredential(tenant_id, client_id, client_secret)
-    → SecretClient(vault_url, credential)
-    → client.get_secret("kv-pseudo-general-v1")
-    → secret.value  # AES-256 key material
+kms_client.authenticate(url="https://kms.internal", credential=service_token)
+    → kms_client.get_secret(path="pseudo/ff1-general")
+    → secret_value  # AES-256 key material
 ```
 
-In both cases: keys are never written to disk, environment variables, logs, or pipeline configuration. They are held in memory for the duration of the job and discarded when the process exits. Key version management (retrieving a specific version for re-pseudonymization of historical data) is supported by both Vault and AKV.
+**Option 2 — Cloud KMS via Private Network**
+
+If a cloud KMS is preferred (e.g., for unified key lifecycle management with cloud-side audit integration), it is accessible from on-prem via a private network endpoint (VPN or dedicated link). The service authenticates via a service principal credential:
+
+```
+kms_client.authenticate(vault_url, credential=service_principal_credential)
+    → kms_client.get_secret("pseudo-ff1-general-v1")
+    → secret_value  # AES-256 key material
+```
+
+In both cases: keys are never written to disk, environment variables, logs, or pipeline configuration. They are held in memory for the duration of the job and discarded when the process exits. Key version management (retrieving a specific version for re-pseudonymization of historical data) is supported by both patterns.
 
 
 ## Dependency Summary (requirements.txt skeleton)
@@ -180,14 +175,13 @@ kiwipiepy>=0.17.0                  # Korean tokenizer for free-text fallback if 
 # privacy risk validation
 anonymeter>=1.0.0
 
-# storage (conditional)
-adlfs>=2024.4.0                    # only if ADLS is chosen as storage layer
+# storage (conditional — add the fsspec driver for your cloud provider)
+# e.g., adlfs for Azure Data Lake, gcsfs for GCS, s3fs for S3
 
-# key management (one of the following)
-hvac>=2.3.0                        # HashiCorp Vault on-prem
-azure-keyvault-secrets>=4.8.0      # Azure Key Vault over private link
-azure-identity>=1.17.0             # required if using Azure Key Vault
+# key management (one of the following — depends on KMS choice)
+# on-prem KMS client library
+# cloud KMS client library + authentication library
 
-# audit logging (if forwarding to Azure Monitor)
-azure-monitor-opentelemetry>=1.3.0
+# audit log forwarder (if forwarding on-prem events to cloud logging platform)
+# depends on environment choice; not pinned here
 ```

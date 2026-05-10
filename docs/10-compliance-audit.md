@@ -22,15 +22,15 @@ Based on the PIPC "Comprehensive Guidelines on Processing Pseudonymized Data" (S
 ### Technical Control Requirements
 
 - [ ] **Pseudonymization technique documented** — FF1 (NIST SP 800-38G) + HMAC-SHA-256; algorithm selection rationale recorded
-- [ ] **Keys managed separately from data** — Azure Key Vault; no key material co-located with pseudonymized data; Managed Identity access only
+- [ ] **Keys managed separately from data** — an isolated key management service; no key material co-located with pseudonymized data; service-identity access only
 - [ ] **Encryption strength sufficient** — AES-256 key material; computational infeasibility of brute-force attack documented
-- [ ] **Raw data access restricted** — ADLS Raw Zone accessible only via ADF Managed Identity and documented break-glass procedure; no data engineer or ML engineer direct access
+- [ ] **Raw data access restricted** — Raw storage zone accessible only via the authorized ingestion service identity and documented break-glass procedure; no data engineer or ML engineer direct access
 - [ ] **Pseudonymized zone access controlled** — RBAC implemented; access limited to data engineering and ML roles; no raw-zone cross-access
 - [ ] **Key rotation policy active** — Quarterly automated rotation; key versioning ensures no data loss; rotation events logged
 
 ### Operational Control Requirements
 
-- [ ] **Audit logging active and immutable** — Azure Monitor + Log Analytics; Key Vault access logs; ADLS access logs; pipeline execution logs; 90-day active retention + 1-year archive
+- [ ] **Audit logging active and immutable** — Audit logging platform; KMS access logs; storage access logs; pipeline execution logs; 90-day active retention + 1-year archive
 - [ ] **Re-identification prohibition enforced** — Technical controls (no keys in ML compute) and policy controls (contractual prohibition for any team accessing pseudonymized data)
 - [ ] **Incident response plan in place** — Key compromise, unauthorized access, and suspected re-identification scenarios documented with response timelines
 - [ ] **Third-party provision controls** — If pseudonymized data is shared with any external party, additional contractual safeguards and PIPC notification procedures are in place
@@ -50,33 +50,33 @@ Based on the PIPC "Comprehensive Guidelines on Processing Pseudonymized Data" (S
 │  Event Sources                                               │
 │                                                              │
 │  ┌────────────────┐  ┌──────────────┐  ┌─────────────────┐  │
-│  │  Azure Key     │  │  ADLS        │  │  ADF Pipeline   │  │
-│  │  Vault         │  │  (Raw Zone + │  │  (Copy +        │  │
-│  │  Audit Logs    │  │  Pseudo Zone)│  │  Pseudo Jobs)   │  │
+│  │  KMS           │  │  Storage     │  │  Pipeline       │  │
+│  │  Audit Log     │  │  Access Log  │  │  Execution Log  │  │
+│  │  (key access)  │  │  (raw zone + │  │  (pseudo jobs)  │  │
+│  │                │  │  pseudo zone)│  │                 │  │
 │  └───────┬────────┘  └──────┬───────┘  └────────┬────────┘  │
 │          │                  │                    │           │
 │          └──────────────────┴────────────────────┘           │
 │                             │                                │
-│                    Azure Monitor                             │
-│                    Diagnostic Settings                       │
+│                    Audit Log Aggregator                      │
+│                    (cloud-side or on-prem SIEM)              │
 │                             │                                │
 │                             ▼                                │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │  Log Analytics Workspace                               │  │
-│  │  • Immutable log store                                 │  │
+│  │  Immutable Log Store                                   │  │
 │  │  • 90-day active retention                             │  │
-│  │  • Archive: 1 year (Azure Monitor Archive tier)        │  │
-│  │  • Query: KQL for ad-hoc audit and compliance reports  │  │
+│  │  • Archive: 1 year                                     │  │
+│  │  • Ad-hoc query for audit and compliance reports       │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                             │                                │
 │              ┌──────────────┴──────────────┐                 │
 │              ▼                             ▼                 │
 │  ┌─────────────────────┐      ┌────────────────────────┐    │
-│  │  Alert Rules        │      │  Microsoft Purview      │    │
-│  │  • Unexpected raw   │      │  Data Lineage Graph     │    │
-│  │    zone access      │      │  on-prem → raw →        │    │
-│  │  • Key Vault errors │      │  pseudonymized → ML     │    │
-│  │  • Job failure      │      │  (PIPC audit evidence)  │    │
+│  │  Alert Rules        │      │  Data Lineage Tracker   │    │
+│  │  • Unexpected raw   │      │  on-prem → raw →        │    │
+│  │    zone access      │      │  pseudonymized → ML     │    │
+│  │  • KMS errors       │      │  (PIPC audit evidence)  │    │
+│  │  • Job failure      │      │                        │    │
 │  │  • Key expiry warns │      └────────────────────────┘    │
 │  └─────────────────────┘                                     │
 └──────────────────────────────────────────────────────────────┘
@@ -86,12 +86,12 @@ Based on the PIPC "Comprehensive Guidelines on Processing Pseudonymized Data" (S
 
 | Event | Source | Retention | PIPA Evidence |
 |---|---|---|---|
-| Key retrieval | Key Vault audit log | 1 year | Who accessed keys, when, for which job |
-| Raw zone read | ADLS diagnostic log | 1 year | Every access to raw PII data |
-| Raw zone write (ingestion) | ADLS diagnostic log | 1 year | Data ingestion audit trail |
-| Pseudonymization job run | Azure Monitor (custom) | 1 year | Which columns, which key version, row count |
-| Pseudonymized zone access | ADLS diagnostic log | 90 days | Normal operational access |
-| RBAC change | Azure AD audit log | 90 days | Access control change tracking |
+| Key retrieval | KMS audit log | 1 year | Who accessed keys, when, for which job |
+| Raw zone read | Storage access log | 1 year | Every access to raw PII data |
+| Raw zone write (ingestion) | Storage access log | 1 year | Data ingestion audit trail |
+| Pseudonymization job run | Audit platform (custom event) | 1 year | Which columns, which key version, row count |
+| Pseudonymized zone access | Storage access log | 90 days | Normal operational access |
+| RBAC change | Identity provider audit log | 90 days | Access control change tracking |
 
 
 ## Re-identification Risk Metrics
@@ -131,10 +131,10 @@ compliance = key_age_days < 90
 Alert threshold: 75 days (15-day warning before rotation due).
 
 ### Raw Zone Access Rate
-The raw zone should be accessed only by ADF ingestion jobs and authorized break-glass procedures. Track:
+The raw zone should be accessed only by the authorized ingestion service identity and documented break-glass procedures. Track:
 
 ```
-unexpected_access_count = raw_zone_access_events WHERE principal NOT IN [adf_mi, pseudo_job_mi]
+unexpected_access_count = raw_zone_access_events WHERE principal NOT IN [ingestion_service_identity, pseudo_job_identity]
 ```
 
 Target: 0 unexpected accesses. Any non-zero value triggers an immediate security review.
@@ -142,7 +142,7 @@ Target: 0 unexpected accesses. Any non-zero value triggers an immediate security
 
 ## PIPA Audit Response Pack
 
-Maintain the following documents in a designated, access-controlled location (e.g., SharePoint with DPO and legal access) for rapid response to a PIPC inquiry:
+Maintain the following documents in a designated, access-controlled location (DPO and legal access) for rapid response to a PIPC inquiry:
 
 | Document | Owner | Review Frequency |
 |---|---|---|
@@ -156,16 +156,16 @@ Maintain the following documents in a designated, access-controlled location (e.
 
 In the event of a PIPC inspection or complaint:
 1. Assemble the above pack within 48 hours
-2. Prepare KQL queries for Log Analytics to export specific time-range audit logs
+2. Prepare audit log queries to export specific time-range audit logs from the log store
 3. Engage legal counsel with PIPA expertise before responding to the PIPC
 
 
-## Purview Lineage as Compliance Evidence
+## Data Lineage as Compliance Evidence
 
-Microsoft Purview's data lineage feature automatically tracks data movement through ADF pipelines. For PIPA compliance, the Purview lineage graph provides:
+A data catalog or lineage tool integrated with the pipeline provides queryable records of data movement. For PIPA compliance, lineage tracking should demonstrate:
 
-- A visual and queryable record of data flow: on-prem source → Raw Zone → Pseudonymized Zone → Databricks → ML model
-- Evidence that raw data did not flow directly to consumption layers (no lineage edge from Raw Zone to Databricks or ML endpoint)
+- The end-to-end data flow: on-prem source → raw zone → pseudonymized zone → ML/analytics
+- That raw data did not flow directly to consumption layers (no lineage edge bypassing the pseudonymization boundary)
 - Column-level sensitivity labels showing which columns are classified as PII/SPII and which are pseudonymized
 
-Export Purview lineage screenshots and sensitivity label reports quarterly for inclusion in the compliance documentation.
+Export lineage records and sensitivity label reports quarterly for inclusion in the compliance documentation pack.
